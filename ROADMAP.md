@@ -133,7 +133,27 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
       hook). The hook now keeps no dust on these paths; `WstGBPHybridQuoter` mirrors both (exact-in is a
       lower bound, `quoteExactOutput` reverts, `previewSwap` flags `"residual below wrapper threshold"`).
       Regression tests added to `test/WstGBPHybridHook.t.sol`. Low/info items deferred to external audit:
-      hook doesn't pin `fee`/`tickSpacing`, no `beforeInitialize` guard, redundant `_inNestedSwap`,
+      hook doesn't pin `fee`/`tickSpacing`, no `beforeInitialize` guard,
       `_edgeSqrtPrice` double-floor, exact-out capacity 1-wei window.
+- [x] **Gas-optimization pass (2026-05-31)** — all 58 tests still green, pricing byte-identical
+      (`quote == execution` parity + round-trip tests unchanged):
+      - Both hooks now read the backstop price **directly off the wrapper's immutable feeds**
+        (`act.mintcost(pip.read())` / `act.burncost(pip.read())` / `act.cooldown()`) instead of
+        `wrapper.mintcost()`/`burncost()`/`cooldown()`, skipping the MaseerOne dispatch hop. `act`/`pip`
+        are `immutable` in MaseerOne, fetched once in each constructor and cached as immutables ⇒
+        byte-identical to the wrapper facade (`mint`/`redeem` use the same feeds). New
+        `src/interfaces/IMaseerFeeds.sol`; `IwstGBP` gained `act()`/`pip()` getters; quoters left on the
+        facade (off-chain; same value ⇒ parity preserved).
+      - Backstop sell-exact-out deduped (was reading `burncost()` twice); hybrid reads the direction's
+        cost **once per swap** and threads it into `_edgeSqrtPrice`/`_backstopExactIn`/`_backstopExactOut`
+        (now take a `cost` param; `_edgeSqrtPrice` is `pure`).
+      - Hybrid `_inNestedSwap` reentrancy guard is now `bool private transient` (EIP-1153) ⇒ the hook
+        holds **zero persistent storage**. Required bumping `solc_version` 0.8.26 → **0.8.28** (evm stays
+        `cancun`); v4 deps compile fine (forge compiles the one exact-`0.8.26`-pinned dep in its own unit).
+      - `via_ir=true` measured a real **-193,800 gas (-1.210%)** whole-suite, all 58 tests green. Since
+        fork-test totals are dominated by *unchanged* mainnet external calls, that -1.21% is
+        concentrated in our own contract code. **Decision (user):** flipped the default profile to
+        `via_ir = true` (slower compiles, always-optimized bytecode). `.gas-snapshot` baseline (58
+        entries, committed-able) regenerated at `via_ir=true`.
 - [ ] Pin `lib/v4-core` / `lib/v4-periphery` to tagged releases in `.gitmodules` (currently
       periphery `363226d`, core `v4.0.0`). Note: working dir is not a git repo here.

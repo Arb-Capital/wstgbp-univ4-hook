@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {BaseHook} from "./base/BaseHook.sol";
 import {IwstGBP} from "./interfaces/IwstGBP.sol";
+import {IMaseerAct, IMaseerPip} from "./interfaces/IMaseerFeeds.sol";
 
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -39,6 +40,11 @@ contract WstGBPBackstopHook is BaseHook {
     IwstGBP public immutable wrapper;
     address public immutable tgbp;
     address public immutable wst;
+    /// @dev The wrapper's two immutable price feeds, cached so the hook can read the backstop price
+    ///      directly (act.mintcost(pip.read())) and skip the wrapper's dispatch hop. Byte-identical to
+    ///      `wrapper.mintcost()`/`burncost()`/`cooldown()` because `mint`/`redeem` use the same feeds.
+    IMaseerAct public immutable act;
+    IMaseerPip public immutable pip;
 
     error BadCurrencyOrdering();
     error PoolNotSupported();
@@ -53,6 +59,8 @@ contract WstGBPBackstopHook is BaseHook {
         wst = address(_wrapper);
         address _tgbp = _wrapper.gem();
         tgbp = _tgbp;
+        act = IMaseerAct(_wrapper.act());
+        pip = IMaseerPip(_wrapper.pip());
         if (_tgbp >= wst) revert BadCurrencyOrdering();
         currency0 = Currency.wrap(_tgbp);
         currency1 = Currency.wrap(wst);
@@ -104,7 +112,7 @@ contract WstGBPBackstopHook is BaseHook {
         // Sells need an atomic redeem; a non-zero cooldown defers the wrapper's payout (incompatible
         // with an atomic swap) and this pool has no LP to fall back to, so reject the sell outright
         // rather than burn wstGBP into a deferred, hook-owned redemption.
-        if (!params.zeroForOne && wrapper.cooldown() != 0) revert RedeemCooldownActive();
+        if (!params.zeroForOne && act.cooldown() != 0) revert RedeemCooldownActive();
 
         bool exactInput = params.amountSpecified < 0;
         uint256 specifiedAmount = (exactInput ? uint256(-params.amountSpecified) : uint256(params.amountSpecified));
@@ -124,7 +132,7 @@ contract WstGBPBackstopHook is BaseHook {
                 deltaUnspecified = -wOut.toInt128();
             } else {
                 uint256 wOut = specifiedAmount;
-                uint256 tgbpIn = FullMath.mulDivRoundingUp(wOut, wrapper.mintcost(), WAD);
+                uint256 tgbpIn = FullMath.mulDivRoundingUp(wOut, _mintcost(), WAD);
                 poolManager.take(currency0, address(this), tgbpIn);
                 wrapper.mint(tgbpIn); // mints >= wOut; surplus stays as dust
                 _settleToManager(currency1, wOut);
@@ -135,7 +143,7 @@ contract WstGBPBackstopHook is BaseHook {
             // SELL wstGBP: wstGBP (currency1) in -> tGBP (currency0) out.
             if (exactInput) {
                 uint256 wIn = specifiedAmount;
-                uint256 claim = FullMath.mulDiv(wIn, wrapper.burncost(), WAD);
+                uint256 claim = FullMath.mulDiv(wIn, _burncost(), WAD);
                 _requireWrapperFunded(claim);
                 poolManager.take(currency1, address(this), wIn);
                 uint256 received = _redeem(wIn);
@@ -147,8 +155,9 @@ contract WstGBPBackstopHook is BaseHook {
                 deltaUnspecified = -received.toInt128();
             } else {
                 uint256 tOut = specifiedAmount;
-                uint256 wIn = FullMath.mulDivRoundingUp(tOut, WAD, wrapper.burncost());
-                uint256 claim = FullMath.mulDiv(wIn, wrapper.burncost(), WAD); // >= tOut
+                uint256 bc = _burncost();
+                uint256 wIn = FullMath.mulDivRoundingUp(tOut, WAD, bc);
+                uint256 claim = FullMath.mulDiv(wIn, bc, WAD); // >= tOut
                 _requireWrapperFunded(claim);
                 poolManager.take(currency1, address(this), wIn);
                 uint256 received = _redeem(wIn); // returns >= tOut; surplus stays as dust
@@ -160,6 +169,16 @@ contract WstGBPBackstopHook is BaseHook {
         }
 
         return (IHooks.beforeSwap.selector, toBeforeSwapDelta(deltaSpecified, deltaUnspecified), 0);
+    }
+
+    /// @dev The backstop ask, read directly off the wrapper's immutable feeds (== `wrapper.mintcost()`).
+    function _mintcost() internal view returns (uint256) {
+        return act.mintcost(pip.read());
+    }
+
+    /// @dev The backstop bid, read directly off the wrapper's immutable feeds (== `wrapper.burncost()`).
+    function _burncost() internal view returns (uint256) {
+        return act.burncost(pip.read());
     }
 
     function _redeem(uint256 wIn) internal returns (uint256 received) {

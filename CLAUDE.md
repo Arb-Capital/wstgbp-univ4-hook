@@ -180,8 +180,9 @@ hook is mined+deployed on the fork. The MaseerGate is forced open via
   `src/utils/BaseHook.sol`**, which is why we vendor `src/base/BaseHook.sol`) with nested
   `lib/v4-core` @ `v4.0.0` (`59d3ecf5`). Imports use the `@uniswap/v4-core/...` prefix
   (see `remappings.txt`).
-- solc **0.8.26**, `evm_version = cancun` (v4 flash accounting needs EIP-1153 transient storage),
-  `via_ir = false` (a `viair` profile exists if a "stack too deep" ever appears).
+- solc **0.8.28**, `evm_version = cancun` (v4 flash accounting needs EIP-1153 transient storage; the
+  hybrid hook's reentrancy guard is a `transient` state var, which needs 0.8.28). `via_ir = true` by
+  default (~1.2% lower runtime gas on the fork suite; the `viair` profile is kept as an explicit alias).
 
 ## Gotchas
 

@@ -60,4 +60,12 @@ interface IwstGBP {
 
     /// @notice The underlying purchase token (tGBP).
     function gem() external view returns (address);
+
+    /// @notice The market-timing/fee feed (MaseerGate). `immutable` in the wrapper, so it is safe to
+    ///         cache: `mintcost()`/`burncost()`/`cooldown()` forward to it. See {IMaseerAct}.
+    function act() external view returns (address);
+
+    /// @notice The oracle NAV price feed. `immutable` in the wrapper, so it is safe to cache:
+    ///         `navprice()`/`mintcost()`/`burncost()` read from it. See {IMaseerPip}.
+    function pip() external view returns (address);
 }

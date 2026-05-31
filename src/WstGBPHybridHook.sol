@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {BaseHook} from "./base/BaseHook.sol";
 import {IwstGBP} from "./interfaces/IwstGBP.sol";
+import {IMaseerAct, IMaseerPip} from "./interfaces/IMaseerFeeds.sol";
 
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -51,10 +52,17 @@ contract WstGBPHybridHook is BaseHook {
     IwstGBP public immutable wrapper;
     address public immutable tgbp;
     address public immutable wst;
+    /// @dev The wrapper's two immutable price feeds, cached so the hook can read the backstop price
+    ///      directly (act.mintcost(pip.read())) and skip the wrapper's dispatch hop. Byte-identical to
+    ///      `wrapper.mintcost()`/`burncost()`/`cooldown()` because `mint`/`redeem` use the same feeds.
+    IMaseerAct public immutable act;
+    IMaseerPip public immutable pip;
 
     /// @dev Reentrancy guard: while true, the (nested) swap is the hook's own AMM fill, so the swap
-    ///      callback is a passthrough and the backstop logic is skipped.
-    bool private _inNestedSwap;
+    ///      callback is a passthrough and the backstop logic is skipped. Transient (EIP-1153): the flag
+    ///      only lives within a single transaction and auto-clears at its end, so the hook keeps no
+    ///      persistent storage at all.
+    bool private transient _inNestedSwap;
 
     error BadCurrencyOrdering();
     error PoolNotSupported();
@@ -68,6 +76,8 @@ contract WstGBPHybridHook is BaseHook {
         wst = address(_wrapper);
         address _tgbp = _wrapper.gem();
         tgbp = _tgbp;
+        act = IMaseerAct(_wrapper.act());
+        pip = IMaseerPip(_wrapper.pip());
         if (_tgbp >= wst) revert BadCurrencyOrdering();
         currency0 = Currency.wrap(_tgbp);
         currency1 = Currency.wrap(wst);
@@ -114,12 +124,17 @@ contract WstGBPHybridHook is BaseHook {
         // outer AMM fills the sell against in-range LP. The swapper is protected by the router's
         // slippage bounds (minAmountOut on exact-in, full-delivery on exact-out). Buys are unaffected
         // because mint is always atomic.
-        if (!params.zeroForOne && wrapper.cooldown() != 0) {
+        if (!params.zeroForOne && act.cooldown() != 0) {
             return (IHooks.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0);
         }
 
+        // The backstop price for this direction (mintcost for buys / burncost for sells), read once and
+        // reused for both the AMM edge and the residual backstop. Constant within the tx, so this is
+        // identical to reading it separately in each helper — it just avoids the extra oracle hops.
+        uint256 cost = params.zeroForOne ? _mintcost() : _burncost();
+
         // 1) Fill in-band LP via a nested AMM swap bounded at the fee-adjusted backstop edge.
-        uint160 edge = _edgeSqrtPrice(params.zeroForOne, key.fee);
+        uint160 edge = _edgeSqrtPrice(params.zeroForOne, key.fee, cost);
         (uint256 ammIn, uint256 ammOut) = _fillAmm(key, params.zeroForOne, params.amountSpecified, edge);
 
         // 2) Backstop the residual and combine. The specified leg cancels the OUTER swap entirely so
@@ -132,14 +147,14 @@ contract WstGBPHybridHook is BaseHook {
             // PoolManager for the router to refund (or for the outer AMM to fill as bonus output). The
             // hook keeps no dust.
             uint256 amountIn = uint256(-params.amountSpecified);
-            (uint256 bOut, uint256 inConsumed) = _backstopExactIn(params.zeroForOne, amountIn - ammIn);
+            (uint256 bOut, uint256 inConsumed) = _backstopExactIn(params.zeroForOne, amountIn - ammIn, cost);
             uint256 totalOut = ammOut + bOut;
             uint256 totalIn = ammIn + inConsumed;
             delta = toBeforeSwapDelta(totalIn.toInt128(), -totalOut.toInt128());
         } else {
             // EXACT-OUTPUT: backstop the residual output; charge AMM input + backstop input.
             uint256 amountOut = uint256(params.amountSpecified);
-            uint256 totalIn = ammIn + _backstopExactOut(params.zeroForOne, amountOut - ammOut);
+            uint256 totalIn = ammIn + _backstopExactOut(params.zeroForOne, amountOut - ammOut, cost);
             delta = toBeforeSwapDelta(-amountOut.toInt128(), totalIn.toInt128());
         }
         return (IHooks.beforeSwap.selector, delta, 0);
@@ -174,12 +189,16 @@ contract WstGBPHybridHook is BaseHook {
     ///      untouched (NOT taken from the PoolManager): the caller bills only `inConsumed`, and the
     ///      router refunds the remainder — the hook keeps no dust. Output is settled to the
     ///      PoolManager; the input-side delta is reconciled by the combined `BeforeSwapDelta`.
-    function _backstopExactIn(bool zeroForOne, uint256 residualIn) internal returns (uint256 out, uint256 inConsumed) {
+    function _backstopExactIn(bool zeroForOne, uint256 residualIn, uint256 cost)
+        internal
+        returns (uint256 out, uint256 inConsumed)
+    {
         if (residualIn == 0) return (0, 0);
 
         if (zeroForOne) {
             // BUY: below the mint threshold the wrapper can't mint; leave it for the router to refund.
-            if (residualIn < wrapper.mintcost()) return (0, 0);
+            // `cost` is mintcost for this direction.
+            if (residualIn < cost) return (0, 0);
             poolManager.take(currency0, address(this), residualIn);
             out = wrapper.mint(residualIn);
             _settleToManager(currency1, out);
@@ -187,7 +206,7 @@ contract WstGBPHybridHook is BaseHook {
         } else {
             // SELL: below the redeem minimum the wrapper can't redeem; leave it for the router to refund.
             if (residualIn < WAD) return (0, 0);
-            uint256 claim = FullMath.mulDiv(residualIn, wrapper.burncost(), WAD);
+            uint256 claim = FullMath.mulDiv(residualIn, cost, WAD); // `cost` is burncost
             _requireWrapperFunded(claim);
             poolManager.take(currency1, address(this), residualIn);
             out = _redeem(residualIn);
@@ -203,29 +222,27 @@ contract WstGBPHybridHook is BaseHook {
     ///      PoolManager, and return the input spent. The input is taken from the PoolManager (the
     ///      router pre-settled it); the surplus over what the backstop needs is refunded by the
     ///      router via its `maxAmountIn` accounting.
-    function _backstopExactOut(bool zeroForOne, uint256 residualOut) internal returns (uint256 inSpent) {
+    function _backstopExactOut(bool zeroForOne, uint256 residualOut, uint256 cost) internal returns (uint256 inSpent) {
         if (residualOut == 0) return 0;
 
         if (zeroForOne) {
-            // BUY exact-out: need `residualOut` wstGBP; pay tGBP.
-            uint256 mc = wrapper.mintcost();
-            uint256 tgbpIn = FullMath.mulDivRoundingUp(residualOut, mc, WAD);
+            // BUY exact-out: need `residualOut` wstGBP; pay tGBP. `cost` is mintcost.
+            uint256 tgbpIn = FullMath.mulDivRoundingUp(residualOut, cost, WAD);
             // A sub-threshold residual can't be minted at a fair price (the wrapper needs >= mintcost
             // in). Revert rather than clamp the input up and overcharge the swapper for the shortfall
             // (which would also make the hybrid worse than the pure backstop and leave dust in the hook).
-            if (tgbpIn < mc) revert BackstopResidualTooSmall();
+            if (tgbpIn < cost) revert BackstopResidualTooSmall();
             poolManager.take(currency0, address(this), tgbpIn);
             wrapper.mint(tgbpIn); // mints >= residualOut wstGBP; <= 1 wei rounding surplus stays as dust
             _settleToManager(currency1, residualOut);
             inSpent = tgbpIn;
         } else {
-            // SELL exact-out: need `residualOut` tGBP; pay wstGBP.
-            uint256 bc = wrapper.burncost();
-            uint256 wIn = FullMath.mulDivRoundingUp(residualOut, WAD, bc);
+            // SELL exact-out: need `residualOut` tGBP; pay wstGBP. `cost` is burncost.
+            uint256 wIn = FullMath.mulDivRoundingUp(residualOut, WAD, cost);
             // A sub-threshold residual can't be redeemed (the wrapper needs >= 1 wstGBP in). Revert
             // rather than clamp the input up and overcharge the swapper.
             if (wIn < WAD) revert BackstopResidualTooSmall();
-            uint256 claim = FullMath.mulDiv(wIn, bc, WAD); // >= residualOut
+            uint256 claim = FullMath.mulDiv(wIn, cost, WAD); // >= residualOut
             _requireWrapperFunded(claim);
             poolManager.take(currency1, address(this), wIn);
             uint256 received = _redeem(wIn); // returns >= residualOut tGBP; surplus stays as dust
@@ -238,15 +255,25 @@ contract WstGBPHybridHook is BaseHook {
     /// @dev The sqrtPriceX96 at which the swapper's all-in AMM price equals the backstop edge.
     ///      Buy ceiling = mintcost*(1-fee); sell floor = burncost/(1-fee). Returns a price limit
     ///      clamped to valid bounds.
-    function _edgeSqrtPrice(bool zeroForOne, uint24 fee) internal view returns (uint160) {
+    function _edgeSqrtPrice(bool zeroForOne, uint24 fee, uint256 cost) internal pure returns (uint160) {
         uint256 adj = zeroForOne
-            ? FullMath.mulDiv(wrapper.mintcost(), PIPS - fee, PIPS)  // mintcost*(1-fee)
-            : FullMath.mulDiv(wrapper.burncost(), PIPS, PIPS - fee); // burncost/(1-fee)
+            ? FullMath.mulDiv(cost, PIPS - fee, PIPS)  // mintcost*(1-fee)
+            : FullMath.mulDiv(cost, PIPS, PIPS - fee); // burncost/(1-fee)
         // sqrtPriceX96 = sqrt( (1e18 << 192) / adj ), since pool price (wstGBP/tGBP) = 1e18/adj.
         uint256 sp = FixedPointMathLib.sqrt(PRICE_NUMERATOR / adj);
         if (sp <= TickMath.MIN_SQRT_PRICE) return TickMath.MIN_SQRT_PRICE + 1;
         if (sp >= TickMath.MAX_SQRT_PRICE) return TickMath.MAX_SQRT_PRICE - 1;
         return uint160(sp);
+    }
+
+    /// @dev The backstop ask, read directly off the wrapper's immutable feeds (== `wrapper.mintcost()`).
+    function _mintcost() internal view returns (uint256) {
+        return act.mintcost(pip.read());
+    }
+
+    /// @dev The backstop bid, read directly off the wrapper's immutable feeds (== `wrapper.burncost()`).
+    function _burncost() internal view returns (uint256) {
+        return act.burncost(pip.read());
     }
 
     function _redeem(uint256 wIn) internal returns (uint256 received) {
