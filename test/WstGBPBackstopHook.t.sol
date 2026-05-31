@@ -259,6 +259,66 @@ contract WstGBPBackstopHookForkTest is Test {
         );
     }
 
+    // --- Capacity ---
+
+    /// @notice A buy whose mint would push total supply past `capacity()` must revert (wrapper
+    ///         `ExceedsCap`), and the quoter must flag it; a buy within the headroom still works.
+    function test_buyRevertsWhenCapacityExceeded() public {
+        uint256 headroom = 100 * WAD;
+        vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + headroom));
+
+        (,, bool executable, string memory reason) = quoter.previewSwap(true, -int256(1_000 * WAD));
+        assertFalse(executable, "preview not executable past capacity");
+        assertEq(reason, "exceeds capacity", "preview reason");
+
+        vm.expectRevert();
+        _swapIn(true, 1_000 * WAD); // mints ~1000/mintcost wstGBP >> 100 headroom
+
+        assertGt(_swapIn(true, 50 * WAD), 0, "buy within the capacity headroom still works");
+    }
+
+    // --- Fuzz: quoter == execution and the hook is left clean, across all four modes ---
+
+    function testFuzz_buyExactInputMatchesQuoter(uint256 amtIn) public {
+        amtIn = bound(amtIn, wrapper.mintcost(), 200_000 * WAD);
+        uint256 w0 = _bal(WST, address(this));
+        uint256 got = _swapIn(true, amtIn);
+        assertEq(got, quoter.quoteExactInput(true, amtIn), "buy exact-in == quoter");
+        assertEq(_bal(WST, address(this)) - w0, got, "recipient received output");
+        _assertHookClean();
+    }
+
+    function testFuzz_sellExactInputMatchesQuoter(uint256 amtIn) public {
+        amtIn = bound(amtIn, WAD, 100_000 * WAD);
+        uint256 t0 = _bal(TGBP, address(this));
+        uint256 got = _swapIn(false, amtIn);
+        assertEq(got, quoter.quoteExactInput(false, amtIn), "sell exact-in == quoter");
+        assertEq(_bal(TGBP, address(this)) - t0, got, "recipient received output");
+        _assertHookClean();
+    }
+
+    function testFuzz_buyExactOutputMatchesQuoter(uint256 amtOut) public {
+        amtOut = bound(amtOut, 2 * WAD, 100_000 * WAD);
+        uint256 expectedIn = quoter.quoteExactOutput(true, amtOut);
+        uint256 w0 = _bal(WST, address(this));
+        uint256 spent = _swapOut(true, amtOut, expectedIn);
+        assertEq(spent, expectedIn, "buy exact-out input == quoter");
+        assertEq(_bal(WST, address(this)) - w0, amtOut, "recipient received exact output");
+        assertLe(_bal(WST, address(hook)), 2, "hook keeps <= ~1 wei wstGBP dust");
+        assertEq(_bal(TGBP, address(hook)), 0, "hook holds no tGBP");
+    }
+
+    function testFuzz_sellExactOutputMatchesQuoter(uint256 amtOut) public {
+        amtOut = bound(amtOut, 2 * WAD, 50_000 * WAD);
+        uint256 expectedIn = quoter.quoteExactOutput(false, amtOut);
+        uint256 t0 = _bal(TGBP, address(this));
+        uint256 spent = _swapOut(false, amtOut, expectedIn);
+        assertEq(spent, expectedIn, "sell exact-out input == quoter");
+        assertEq(_bal(TGBP, address(this)) - t0, amtOut, "recipient received exact output");
+        assertLe(_bal(TGBP, address(hook)), 2, "hook keeps <= ~1 wei tGBP dust");
+        assertEq(_bal(WST, address(hook)), 0, "hook holds no wstGBP");
+    }
+
     // --- helpers ---
 
     function _swapIn(bool zeroForOne, uint256 amountIn) internal returns (uint256) {
