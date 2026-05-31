@@ -57,6 +57,9 @@ contract WstGBPBackstopHook is BaseHook {
         currency0 = Currency.wrap(_tgbp);
         currency1 = Currency.wrap(wst);
         // One-time max approval so `wrapper.mint` can pull tGBP from this hook during swaps.
+        // Unbounded is safe here: the hook holds no persistent tGBP (only transient sub-unit dust
+        // mid-swap) and the wrapper is the trusted counterparty, so the approval exposes nothing
+        // extra; a just-in-time exact approval would only add an SSTORE to every buy.
         IERC20Minimal(_tgbp).approve(wst, type(uint256).max);
     }
 

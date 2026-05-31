@@ -137,12 +137,19 @@ least as good; for the **exact hybrid blend** use `WstGBPHybridQuoter`, below). 
   replaying v4's `Pool.swap` over live pool state (`StateLibrary`) to the backstop edge, then pricing
   the residual at the oracle. Fork-validated `quote == execution` for all four modes (+ fuzz). Takes a
   `PoolKey` and the PoolManager; assumes a static LP fee (deployed pools aren't dynamic-fee).
+  `previewSwap(key, zeroForOne, amountSpecified)` adds `(executable, reason)` — the wrapper checks
+  (market open, capacity, funding, cooldown) apply **only to the backstop residual**, so a swap fully
+  filled by LP is executable even with the wrapper market closed.
 
 Execute via `src/periphery/WstGBPSwapRouter.sol` (settle-first):
 `swapExactInput(key, zeroForOne, amountIn, minAmountOut, recipient, deadline)` and
 `swapExactOutput(key, zeroForOne, amountOut, maxAmountIn, recipient, deadline)`. Quotes are
 point-in-time (the oracle ratchets up), so always pass real slippage bounds. `recipient == address(0)`
-means `msg.sender`; exact-output refunds unused input to the payer.
+means `msg.sender`; exact-output refunds unused input to the payer and **enforces full delivery** of
+the requested output. There are also `swapExactInputPermit2`/`swapExactOutputPermit2` variants that
+fund the swap via a Permit2 SignatureTransfer (the payer signs a `PermitTransferFrom` and approves the
+canonical Permit2 instead of this router; the deadline is the permit's). The router emits a
+`Swap(payer, recipient, poolId, zeroForOne, amountIn, amountOut)` event per swap.
 
 ## Build / test / deploy
 
@@ -190,8 +197,9 @@ hook is mined+deployed on the fork. The MaseerGate is forced open via
 Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. Done: both hooks,
 settle-first router with slippage/deadline/recipient + exact-output full-delivery, the backstop quoter,
 the **LP-aware `WstGBPHybridQuoter`** (exact hybrid blend, fork-validated), deploy wiring, a security
-review pass (F1 redeem-validation + cooldown fallback fixed; trust model in `README.md`), and test
-hardening (capacity, pricing fuzz, LP-quote==execution fuzz). Open headlines:
+review pass (F1 redeem-validation + cooldown fallback fixed; trust model in `README.md`), test
+hardening (capacity, pricing fuzz, LP-quote==execution fuzz), the hybrid `previewSwap`, Permit2 router
+entrypoints, and router `Swap` events. Open headlines:
 
-- **Hardening:** integrator events, pin submodule tags (needs a git repo), optional Permit2 entrypoint
-  on the router, and the F2/F3 sub-unit-dust edges (documented, accepted).
+- **Hardening:** pin submodule tags (needs a git repo) and the F2/F3 sub-unit-dust edges (documented,
+  accepted). An external audit is the real gate before mainnet.

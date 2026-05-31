@@ -20,7 +20,9 @@ Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
       Off-chain formula in `CLAUDE.md`.
 - [x] **LP-aware quoter** — `src/periphery/WstGBPHybridQuoter.sol`: replays v4's `Pool.swap` over live
       pool state (`StateLibrary`) to the backstop edge + prices the residual at the oracle ⇒ the
-      *exact* hybrid blend. Validated `quote == execution` for all four modes + 512 fuzz swaps.
+      *exact* hybrid blend. Validated `quote == execution` for all four modes + 512 fuzz swaps. Includes
+      `previewSwap` (executability flags applied only to the backstop residual: market/capacity/funding/
+      cooldown).
 - [x] Deploy script — `script/DeployHook.s.sol` (mines flags `0x88`, CREATE2, pool init fee 5bps /
       tickSpacing 60, deploys router + quoter).
 - [x] Mainnet-fork tests (27): `test/WstGBPBackstopHook.t.sol` (17 — pricing, router hardening,
@@ -44,7 +46,8 @@ Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
 - [x] **Harden `WstGBPSwapRouter`**: split into `swapExactInput` (enforces `minAmountOut`) /
       `swapExactOutput` (enforces `maxAmountIn`, refunds surplus); both take `deadline` + `recipient`
       (`address(0)` ⇒ `msg.sender`). Tested: minOut, maxIn, deadline, recipient, surplus refund.
-      - [ ] Permit2 entrypoint still deferred (only if an end-user/aggregator flow needs it).
+      - [x] Permit2 entrypoints — `swapExactInputPermit2`/`swapExactOutputPermit2` (SignatureTransfer;
+            payer signs a `PermitTransferFrom`, no router approval). Fork-tested vs the approval path.
 - [x] **Deploy the router (and quoter)** from `script/DeployHook.s.sol`.
 
 ### P2 — M2: best-execution across third-party LP + backstop (the "hybrid")
@@ -116,7 +119,8 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
 
 ### P4 — Nice to have
 
-- [ ] Integrator events (the PoolManager emits `Swap`; consider router-level events).
+- [x] Integrator events — `WstGBPSwapRouter` emits `Swap(payer, recipient, poolId, zeroForOne,
+      amountIn, amountOut)` once per swap (all four entrypoints), beyond the PoolManager's own `Swap`.
 - [x] Security review / audit prep pass — done (report: `~/.claude/plans/please-deep-dive-this-...md`).
       Fixed F1 (`RedeemUnderpaid` + cooldown handling: hybrid sells fall back to LP, backstop reverts;
       router enforces exact-output full delivery). Trust model documented in `README.md` (F4).

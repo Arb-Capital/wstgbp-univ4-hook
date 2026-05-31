@@ -372,6 +372,46 @@ contract WstGBPHybridHookForkTest is Test {
         );
     }
 
+    // --- LP-aware previewSwap: amounts + executability (A1) ---
+
+    function test_previewSwap_matchesQuoteFunctions() public view {
+        uint256 amt = 5_000 * WAD;
+        (uint256 inI, uint256 outI,,) = hybridQuoter.previewSwap(key, true, -int256(amt));
+        assertEq(inI, amt, "preview exact-in amountIn");
+        assertEq(outI, hybridQuoter.quoteExactInput(key, true, amt), "preview == quoteExactInput");
+        (uint256 inO, uint256 outO,,) = hybridQuoter.previewSwap(key, true, int256(amt));
+        assertEq(outO, amt, "preview exact-out amountOut");
+        assertEq(inO, hybridQuoter.quoteExactOutput(key, true, amt), "preview == quoteExactOutput");
+    }
+
+    function test_previewSwap_buyNeedingBackstopFlagsMintClosed() public {
+        vm.store(ACT, OPEN_MINT, bytes32(type(uint256).max)); // close mint
+        (,, bool executable, string memory reason) = hybridQuoter.previewSwap(key, true, -int256(600_000 * WAD));
+        assertFalse(executable, "buy needing the backstop is not executable when mint is closed");
+        assertEq(reason, "mint market closed", "reason");
+    }
+
+    function test_previewSwap_smallBuyFullyLpFilledExecutableWhenClosed() public {
+        vm.store(ACT, OPEN_MINT, bytes32(type(uint256).max)); // close mint
+        (,, bool executable, string memory reason) = hybridQuoter.previewSwap(key, true, -int256(10 * WAD));
+        assertTrue(executable, "a swap fully filled by LP is executable even with the wrapper market closed");
+        assertEq(bytes(reason).length, 0, "no reason");
+    }
+
+    function test_previewSwap_sellCooldownNotExecutable() public {
+        vm.store(ACT, COOLDOWN_SLOT, bytes32(uint256(1 days)));
+        (,, bool executable, string memory reason) = hybridQuoter.previewSwap(key, false, -int256(5_000 * WAD));
+        assertFalse(executable, "sell under cooldown flagged (LP-only fallback, quote unreliable)");
+        assertEq(reason, "redeem cooldown active", "reason");
+    }
+
+    function test_previewSwap_capacityExceeded() public {
+        vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + 100 * WAD));
+        (,, bool executable, string memory reason) = hybridQuoter.previewSwap(key, true, -int256(600_000 * WAD));
+        assertFalse(executable, "backstop residual mint exceeds capacity");
+        assertEq(reason, "exceeds capacity", "reason");
+    }
+
     function _bal(address t, address who) internal view returns (uint256) {
         return IERC20Minimal(t).balanceOf(who);
     }

@@ -14,13 +14,22 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
+import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
+
 import {WstGBPBackstopHook} from "../src/WstGBPBackstopHook.sol";
 import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
 import {WstGBPQuoter} from "../src/periphery/WstGBPQuoter.sol";
 import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
 
+interface IPermit2DomainSeparator {
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+}
+
 /// @notice Mainnet-fork tests for the pure-backstop hook (no LP) + the settle-first router & quoter.
 contract WstGBPBackstopHookForkTest is Test {
+    using PoolIdLibrary for PoolKey;
+
     IPoolManager constant PM = IPoolManager(0x000000000004444c5dc75cB358380D2e3dE08A90);
     address constant WST = 0x57C3571f10767E49C9d7b60feb6c67804783B7aE;
     address constant TGBP = 0x27f6c8289550fCE67f6B50BeD1F519966aFE5287;
@@ -34,6 +43,12 @@ contract WstGBPBackstopHookForkTest is Test {
     bytes32 constant CAPACITY_SLOT = keccak256("maseer.gate.capacity");
 
     uint256 constant WAD = 1e18;
+
+    // Canonical Permit2 typehashes (for signing test permits).
+    bytes32 constant TOKEN_PERMISSIONS_TYPEHASH = keccak256("TokenPermissions(address token,uint256 amount)");
+    bytes32 constant PERMIT_TRANSFER_FROM_TYPEHASH = keccak256(
+        "PermitTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline)TokenPermissions(address token,uint256 amount)"
+    );
 
     IwstGBP wrapper = IwstGBP(WST);
     WstGBPBackstopHook hook;
@@ -319,7 +334,95 @@ contract WstGBPBackstopHookForkTest is Test {
         assertEq(_bal(WST, address(hook)), 0, "hook holds no wstGBP");
     }
 
+    // --- Router events (B3) ---
+
+    function test_routerEmitsSwapEvent() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 expectedOut = amtIn * WAD / wrapper.mintcost();
+        vm.expectEmit(true, true, true, true, address(router));
+        emit WstGBPSwapRouter.Swap(address(this), address(this), key.toId(), true, amtIn, expectedOut);
+        router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp);
+    }
+
+    // --- Permit2 entrypoints (A2) ---
+
+    function test_permit2_buyExactInput() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtIn = 1_000 * WAD;
+        address permit2 = address(router.PERMIT2()); // resolve before pranking (it's an external call)
+        deal(TGBP, alice, amtIn);
+        vm.prank(alice);
+        IERC20Minimal(TGBP).approve(permit2, type(uint256).max);
+
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermit(pk, TGBP, amtIn, 0, block.timestamp + 1 hours);
+
+        uint256 expectedOut = amtIn * WAD / wrapper.mintcost();
+        vm.prank(alice);
+        uint256 out = router.swapExactInputPermit2(key, true, amtIn, expectedOut, alice, permit, sig);
+
+        assertEq(out, expectedOut, "permit2 buy == backstop price");
+        assertEq(_bal(WST, alice), out, "alice received wstGBP");
+        assertEq(_bal(TGBP, alice), 0, "alice spent exact tGBP via permit2 (no router approval)");
+    }
+
+    function test_permit2_sellExactOutput() public {
+        uint256 pk = 0xA11CE; // a code-free EOA (Permit2 uses ecrecover, not EIP-1271)
+        address bob = vm.addr(pk);
+        vm.etch(bob, ""); // belt-and-suspenders: ensure no code so the ecrecover path is taken
+        uint256 tOut = 1_000 * WAD;
+        uint256 expectedIn = _ceil(tOut * WAD, wrapper.burncost());
+        uint256 maxIn = expectedIn + 5 * WAD;
+        address permit2 = address(router.PERMIT2()); // resolve before pranking (it's an external call)
+        IERC20Minimal(WST).transfer(bob, maxIn); // fund bob from the test contract's wstGBP
+        vm.prank(bob);
+        IERC20Minimal(WST).approve(permit2, type(uint256).max);
+
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermit(pk, WST, maxIn, 0, block.timestamp + 1 hours);
+
+        uint256 w0 = _bal(WST, bob);
+        vm.prank(bob);
+        uint256 spent = router.swapExactOutputPermit2(key, false, tOut, maxIn, bob, permit, sig);
+
+        assertEq(spent, expectedIn, "permit2 sell input == backstop price");
+        assertEq(_bal(TGBP, bob), tOut, "bob received exact tGBP");
+        assertEq(w0 - _bal(WST, bob), spent, "permit2 surplus refunded to bob");
+    }
+
+    // --- Tiny exact-out reverts on the pure backstop (F3 / C7) ---
+
+    function test_tinyExactOutputRevertsOnBackstop() public {
+        // Wrapper minimums are 1 wstGBP to mint / 1 to burn; a sub-1-unit exact-out can't be served and
+        // the pure backstop has no LP to fall back to, so it reverts on the wrapper dust threshold.
+        vm.expectRevert();
+        router.swapExactOutput(key, true, 0.5e18, 100 * WAD, address(this), block.timestamp); // buy < 1 wstGBP
+        vm.expectRevert();
+        router.swapExactOutput(key, false, 0.5e18, 100 * WAD, address(this), block.timestamp); // sell, wIn < 1 wstGBP
+    }
+
     // --- helpers ---
+
+    function _signPermit(uint256 pk, address token, uint256 amount, uint256 nonce, uint256 deadline)
+        internal
+        view
+        returns (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig)
+    {
+        permit = ISignatureTransfer.PermitTransferFrom({
+            permitted: ISignatureTransfer.TokenPermissions({token: token, amount: amount}),
+            nonce: nonce,
+            deadline: deadline
+        });
+        bytes32 tokenPermissions = keccak256(abi.encode(TOKEN_PERMISSIONS_TYPEHASH, token, amount));
+        // spender is the router (the caller of permitTransferFrom).
+        bytes32 structHash =
+            keccak256(abi.encode(PERMIT_TRANSFER_FROM_TYPEHASH, tokenPermissions, address(router), nonce, deadline));
+        bytes32 ds = IPermit2DomainSeparator(address(router.PERMIT2())).DOMAIN_SEPARATOR();
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", ds, structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        sig = abi.encodePacked(r, s, v);
+    }
 
     function _swapIn(bool zeroForOne, uint256 amountIn) internal returns (uint256) {
         return router.swapExactInput(key, zeroForOne, amountIn, 0, address(this), block.timestamp);

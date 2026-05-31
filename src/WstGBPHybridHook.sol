@@ -70,6 +70,9 @@ contract WstGBPHybridHook is BaseHook {
         if (_tgbp >= wst) revert BadCurrencyOrdering();
         currency0 = Currency.wrap(_tgbp);
         currency1 = Currency.wrap(wst);
+        // One-time max approval so `wrapper.mint` can pull tGBP during swaps. Unbounded is safe: the
+        // hook holds no persistent tGBP (only transient sub-unit dust) and the wrapper is trusted, so
+        // it exposes nothing extra; a just-in-time exact approval would only add an SSTORE per buy.
         IERC20Minimal(_tgbp).approve(wst, type(uint256).max);
     }
 

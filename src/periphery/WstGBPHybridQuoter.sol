@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {IwstGBP} from "../interfaces/IwstGBP.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {SwapMath} from "@uniswap/v4-core/src/libraries/SwapMath.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
@@ -57,9 +58,7 @@ contract WstGBPHybridQuoter {
         view
         returns (uint256 amountOut)
     {
-        uint160 edge = _edgeSqrtPrice(zeroForOne, key.fee);
-        (uint256 ammIn, uint256 ammOut) = _simulateAmm(key, zeroForOne, -int256(amountIn), edge);
-        amountOut = ammOut + _backstopOutForIn(zeroForOne, amountIn - ammIn);
+        (amountOut,,) = _quoteIn(key, zeroForOne, amountIn);
     }
 
     /// @notice Exact-output quote: input required for `amountOut` of the output currency.
@@ -71,9 +70,89 @@ contract WstGBPHybridQuoter {
         view
         returns (uint256 amountIn)
     {
+        (amountIn,,) = _quoteOut(key, zeroForOne, amountOut);
+    }
+
+    /// @notice Quote a swap (same `amountSpecified` convention as `PoolManager.swap`) AND report whether
+    ///         it would execute against the live wrapper now. The AMM leg never touches the wrapper; only
+    ///         the backstop residual is gated, so the wrapper checks apply only when the backstop is used.
+    /// @param amountSpecified Negative for exact-input, positive for exact-output.
+    /// @return amountIn Input the caller pays.
+    /// @return amountOut Output the caller receives.
+    /// @return executable True if a swap of this size would succeed at the current block.
+    /// @return reason Empty if executable, otherwise a short human-readable cause.
+    function previewSwap(PoolKey calldata key, bool zeroForOne, int256 amountSpecified)
+        external
+        view
+        returns (uint256 amountIn, uint256 amountOut, bool executable, string memory reason)
+    {
+        uint256 backstopMintOut; // wstGBP the backstop mints (buys) — checked against capacity
+        uint256 backstopClaim; // tGBP the backstop redeem needs (sells) — checked against funding
+        if (amountSpecified < 0) {
+            amountIn = uint256(-amountSpecified);
+            (amountOut, backstopMintOut, backstopClaim) = _quoteIn(key, zeroForOne, amountIn);
+        } else {
+            amountOut = uint256(amountSpecified);
+            (amountIn, backstopMintOut, backstopClaim) = _quoteOut(key, zeroForOne, amountOut);
+        }
+        (executable, reason) = _check(zeroForOne, backstopMintOut, backstopClaim);
+    }
+
+    /// @dev Exact-input blend + the backstop-leg sizes used for the executability check.
+    function _quoteIn(PoolKey calldata key, bool zeroForOne, uint256 amountIn)
+        internal
+        view
+        returns (uint256 amountOut, uint256 backstopMintOut, uint256 backstopClaim)
+    {
+        uint160 edge = _edgeSqrtPrice(zeroForOne, key.fee);
+        (uint256 ammIn, uint256 ammOut) = _simulateAmm(key, zeroForOne, -int256(amountIn), edge);
+        uint256 residualIn = amountIn - ammIn;
+        uint256 backstopOut = _backstopOutForIn(zeroForOne, residualIn);
+        amountOut = ammOut + backstopOut;
+        if (zeroForOne) backstopMintOut = backstopOut;
+        else if (residualIn >= WAD) backstopClaim = FullMath.mulDiv(residualIn, wrapper.burncost(), WAD);
+    }
+
+    /// @dev Exact-output blend + the backstop-leg sizes used for the executability check.
+    function _quoteOut(PoolKey calldata key, bool zeroForOne, uint256 amountOut)
+        internal
+        view
+        returns (uint256 amountIn, uint256 backstopMintOut, uint256 backstopClaim)
+    {
         uint160 edge = _edgeSqrtPrice(zeroForOne, key.fee);
         (uint256 ammIn, uint256 ammOut) = _simulateAmm(key, zeroForOne, int256(amountOut), edge);
-        amountIn = ammIn + _backstopInForOut(zeroForOne, amountOut - ammOut);
+        uint256 residualOut = amountOut - ammOut;
+        uint256 backstopIn = _backstopInForOut(zeroForOne, residualOut);
+        amountIn = ammIn + backstopIn;
+        if (residualOut > 0) {
+            if (zeroForOne) backstopMintOut = FullMath.mulDiv(backstopIn, WAD, wrapper.mintcost());
+            else backstopClaim = FullMath.mulDiv(backstopIn, wrapper.burncost(), WAD);
+        }
+    }
+
+    /// @dev Mirrors the hook/wrapper constraints, applied only to the backstop residual.
+    function _check(bool zeroForOne, uint256 backstopMintOut, uint256 backstopClaim)
+        internal
+        view
+        returns (bool, string memory)
+    {
+        if (zeroForOne) {
+            if (backstopMintOut > 0) {
+                if (!wrapper.mintable()) return (false, "mint market closed");
+                if (wrapper.totalSupply() + backstopMintOut > wrapper.capacity()) return (false, "exceeds capacity");
+            }
+        } else {
+            // Under a redeem cooldown the hook routes sells to an LP-only passthrough (router price
+            // limit, no backstop) — a path this edge-bounded quote doesn't model — so flag it.
+            if (wrapper.cooldown() != 0) return (false, "redeem cooldown active");
+            if (backstopClaim > 0) {
+                if (!wrapper.burnable()) return (false, "burn market closed");
+                if (IERC20Minimal(tgbp).balanceOf(address(wrapper)) < backstopClaim) {
+                    return (false, "wrapper underfunded");
+                }
+            }
+        }
+        return (true, "");
     }
 
     // -----------------------------------------------------------------------
