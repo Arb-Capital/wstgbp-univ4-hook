@@ -13,6 +13,7 @@ import {WstGBPBackstopHook} from "../src/WstGBPBackstopHook.sol";
 import {WstGBPHybridHook} from "../src/WstGBPHybridHook.sol";
 import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
 import {WstGBPQuoter} from "../src/periphery/WstGBPQuoter.sol";
+import {WstGBPHybridQuoter} from "../src/periphery/WstGBPHybridQuoter.sol";
 import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
 
 /// @notice Mines + CREATE2-deploys a hook, initializes the tGBP/wstGBP pool, and deploys the
@@ -64,6 +65,9 @@ contract DeployHook is Script {
 
         router = new WstGBPSwapRouter(pm);
         quoter = new WstGBPQuoter(wrapper);
+        // The hybrid also gets an LP-aware quoter (the backstop quoter is only a conservative bound
+        // when LP is present); the pure backstop has no LP, so its WstGBPQuoter is already exact.
+        if (hybrid) _deployHybridQuoter(pm, wrapper);
         vm.stopBroadcast();
 
         console2.log(hybrid ? "WstGBPHybridHook:  " : "WstGBPBackstopHook:", hook);
@@ -72,5 +76,12 @@ contract DeployHook is Script {
         console2.log("currency0 (tGBP):  ", tgbp);
         console2.log("currency1 (wstGBP):", WSTGBP);
         console2.log("Pool initialized. Swap via WstGBPSwapRouter (settle-first).");
+    }
+
+    /// @dev Deploys the LP-aware quoter for the hybrid (kept in its own frame to avoid stack pressure
+    ///      in `run`). Must be called inside the broadcast window.
+    function _deployHybridQuoter(IPoolManager pm, IwstGBP wrapper) internal {
+        WstGBPHybridQuoter hybridQuoter = new WstGBPHybridQuoter(wrapper, pm);
+        console2.log("WstGBPHybridQuoter:", address(hybridQuoter));
     }
 }

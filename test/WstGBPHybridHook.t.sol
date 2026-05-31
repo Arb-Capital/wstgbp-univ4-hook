@@ -17,6 +17,7 @@ import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
 import {WstGBPHybridHook} from "../src/WstGBPHybridHook.sol";
 import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
+import {WstGBPHybridQuoter} from "../src/periphery/WstGBPHybridQuoter.sol";
 import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
 
 /// @notice Fork tests for the M2 hybrid hook: third-party LP + backstop, best execution.
@@ -43,6 +44,7 @@ contract WstGBPHybridHookForkTest is Test {
     IwstGBP wrapper = IwstGBP(WST);
     WstGBPHybridHook hook;
     WstGBPSwapRouter router;
+    WstGBPHybridQuoter hybridQuoter;
     PoolModifyLiquidityTest lpRouter;
     PoolKey key;
 
@@ -53,6 +55,7 @@ contract WstGBPHybridHookForkTest is Test {
         _forceMarketOpen();
 
         router = new WstGBPSwapRouter(PM);
+        hybridQuoter = new WstGBPHybridQuoter(wrapper, PM);
         lpRouter = new PoolModifyLiquidityTest(PM);
 
         uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG);
@@ -284,6 +287,89 @@ contract WstGBPHybridHookForkTest is Test {
         uint256 bought = router.swapExactInput(key2, true, 1_000 * WAD, 0, address(this), block.timestamp);
         assertGt(bought, 0, "buy backstops on the no-LP pool under cooldown");
         assertEq(_bal(WST, address(this)) - w0, bought, "buy output");
+    }
+
+    // --- LP-aware quoter: exact parity with blended execution ---
+
+    function test_lpQuoteMatchesExecution_buyExactInput() public {
+        uint256 amtIn = 5_000 * WAD;
+        uint256 quoted = hybridQuoter.quoteExactInput(key, true, amtIn);
+        uint256 received = router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp);
+        assertEq(received, quoted, "LP quote == execution (buy exact-in)");
+    }
+
+    function test_lpQuoteMatchesExecution_sellExactInput() public {
+        uint256 amtIn = 5_000 * WAD;
+        uint256 quoted = hybridQuoter.quoteExactInput(key, false, amtIn);
+        uint256 received = router.swapExactInput(key, false, amtIn, 0, address(this), block.timestamp);
+        assertEq(received, quoted, "LP quote == execution (sell exact-in)");
+    }
+
+    function test_lpQuoteMatchesExecution_buyExactOutput() public {
+        uint256 amtOut = 5_000 * WAD;
+        uint256 quotedIn = hybridQuoter.quoteExactOutput(key, true, amtOut);
+        uint256 spent = router.swapExactOutput(key, true, amtOut, quotedIn + 100 * WAD, address(this), block.timestamp);
+        assertEq(spent, quotedIn, "LP quote == execution (buy exact-out)");
+    }
+
+    function test_lpQuoteMatchesExecution_sellExactOutput() public {
+        uint256 amtOut = 5_000 * WAD;
+        uint256 quotedIn = hybridQuoter.quoteExactOutput(key, false, amtOut);
+        uint256 spent = router.swapExactOutput(key, false, amtOut, quotedIn + 100 * WAD, address(this), block.timestamp);
+        assertEq(spent, quotedIn, "LP quote == execution (sell exact-out)");
+    }
+
+    /// @dev A large swap that consumes deep LP across the band before backstopping — the most
+    ///      tick-crossing-heavy path for the quoter's AMM replay to match.
+    function test_lpQuoteMatchesExecution_largeBuy() public {
+        uint256 amtIn = 600_000 * WAD;
+        uint256 quoted = hybridQuoter.quoteExactInput(key, true, amtIn);
+        uint256 received = router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp);
+        assertEq(received, quoted, "LP quote == execution (large buy)");
+    }
+
+    function testFuzz_lpQuoteMatchesExecution_buyExactInput(uint256 amtIn) public {
+        amtIn = bound(amtIn, wrapper.mintcost(), 800_000 * WAD);
+        uint256 quoted = hybridQuoter.quoteExactInput(key, true, amtIn);
+        uint256 received = router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp);
+        assertEq(received, quoted, "fuzz LP quote == execution (buy exact-in)");
+    }
+
+    function testFuzz_lpQuoteMatchesExecution_sellExactInput(uint256 amtIn) public {
+        amtIn = bound(amtIn, WAD, 300_000 * WAD);
+        uint256 quoted = hybridQuoter.quoteExactInput(key, false, amtIn);
+        uint256 received = router.swapExactInput(key, false, amtIn, 0, address(this), block.timestamp);
+        assertEq(received, quoted, "fuzz LP quote == execution (sell exact-in)");
+    }
+
+    /// @dev With no in-range LP the hybrid quote must collapse to the pure backstop price.
+    function test_lpQuoteMatchesBackstopWhenNoLp() public {
+        PoolKey memory key2 = PoolKey({
+            currency0: Currency.wrap(TGBP),
+            currency1: Currency.wrap(WST),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(hook))
+        });
+        PM.initialize(key2, TickMath.getSqrtPriceAtTick(0));
+
+        uint256 amtIn = 1_000 * WAD;
+        assertEq(
+            hybridQuoter.quoteExactInput(key2, true, amtIn), amtIn * WAD / wrapper.mintcost(), "no-LP buy == backstop"
+        );
+        assertEq(
+            hybridQuoter.quoteExactInput(key2, false, amtIn), amtIn * wrapper.burncost() / WAD, "no-LP sell == backstop"
+        );
+        assertEq(
+            hybridQuoter.quoteExactOutput(key2, true, amtIn),
+            _ceil(amtIn * wrapper.mintcost(), WAD),
+            "no-LP buy-out == backstop"
+        );
+        assertEq(
+            hybridQuoter.quoteExactOutput(key2, false, amtIn),
+            _ceil(amtIn * WAD, wrapper.burncost()),
+            "no-LP sell-out == backstop"
+        );
     }
 
     function _bal(address t, address who) internal view returns (uint256) {

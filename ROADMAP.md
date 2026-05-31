@@ -17,7 +17,10 @@ Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
 - [x] Settle-first periphery router — `src/periphery/WstGBPSwapRouter.sol` (exact-in/out,
       minOut/maxIn/deadline/recipient, surplus refund).
 - [x] Quoter — `src/periphery/WstGBPQuoter.sol`: backstop quotes + `previewSwap` executability.
-      Off-chain formula in `CLAUDE.md`. (LP-aware quote still open — see below.)
+      Off-chain formula in `CLAUDE.md`.
+- [x] **LP-aware quoter** — `src/periphery/WstGBPHybridQuoter.sol`: replays v4's `Pool.swap` over live
+      pool state (`StateLibrary`) to the backstop edge + prices the residual at the oracle ⇒ the
+      *exact* hybrid blend. Validated `quote == execution` for all four modes + 512 fuzz swaps.
 - [x] Deploy script — `script/DeployHook.s.sol` (mines flags `0x88`, CREATE2, pool init fee 5bps /
       tickSpacing 60, deploys router + quoter).
 - [x] Mainnet-fork tests (27): `test/WstGBPBackstopHook.t.sol` (17 — pricing, router hardening,
@@ -88,9 +91,9 @@ edge, not a fixed band — so it self-corrects as the rate moves out of where LP
       pure-backstop price; price past edge ⇒ AMM skipped + out-of-band LP ignored + price unchanged;
       large swap ⇒ deep blend then backstop; LP earns the pool fee (feeGrowth increases);
       market-closed + underfunded reverts. Hybrid now has full test parity with M1 + LP.
-- [ ] **(5)** Deploy script + quoter for the hybrid (the M1 quoter ignores LP, so a hybrid quote
-      needs to simulate the AMM portion — likely an on-chain `quote` via the v4 Quoter against this
-      pool, or a combined estimate).
+- [x] **(5)** Deploy script + quoter for the hybrid — `WstGBPHybridQuoter` (LP-aware, exact: replays
+      the AMM to the edge via `StateLibrary` + backstops the residual) is deployed alongside the hybrid
+      in `script/DeployHook.s.sol`.
 - [~] **(6) Consolidation — deferred.** The hybrid subsumes the backstop (no-LP ⇒ identical), so one
       hook is viable, BUT the user wants to keep BOTH to evaluate. So both are kept; the deploy script
       selects via env `HOOK=hybrid|backstop`. Revisit retiring the backstop once a variant is chosen.
@@ -104,14 +107,18 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
 
 ### P3 — Test gaps
 
-- [ ] `capacity()`-exceeded revert path (tests currently force capacity to max).
+- [x] `capacity()`-exceeded revert path (`test_buyRevertsWhenCapacityExceeded` + quoter flag).
 - [x] Quoter == execution tests (4 modes) + `previewSwap` executability flags.
-- [ ] Fuzz pricing/rounding across amounts; assert exact-output dust ≤ 1 wei and accrues.
-- [ ] Large-swap / multi-swap sequences; sell depth vs wrapper tGBP reserves.
+- [x] Fuzz pricing/rounding across amounts (backstop quoter == execution, hook-clean, dust ≤ 1 wei) +
+      hybrid LP-quote == execution fuzz.
+- [x] Large-swap blend (`test_lpQuoteMatchesExecution_largeBuy`, `test_largeSwapBlendsDeepThenBackstops`);
+      sell depth guarded by `WrapperUnderfunded` + `RedeemUnderpaid`.
 
 ### P4 — Nice to have
 
 - [ ] Integrator events (the PoolManager emits `Swap`; consider router-level events).
-- [ ] Security review / audit prep pass (settle/delta accounting, reentrancy, wrapper assumptions).
+- [x] Security review / audit prep pass — done (report: `~/.claude/plans/please-deep-dive-this-...md`).
+      Fixed F1 (`RedeemUnderpaid` + cooldown handling: hybrid sells fall back to LP, backstop reverts;
+      router enforces exact-output full delivery). Trust model documented in `README.md` (F4).
 - [ ] Pin `lib/v4-core` / `lib/v4-periphery` to tagged releases in `.gitmodules` (currently
-      periphery `363226d`, core `v4.0.0`).
+      periphery `363226d`, core `v4.0.0`). Note: working dir is not a git repo here.

@@ -120,7 +120,7 @@ not on the tGBP ban list.
 
 The **backstop** price is the wrapper's oracle price (not pool state) — a pure read. It is **exact on
 a no-LP pool**, and a **conservative bound** when in-band LP is present (real execution is then at
-least as good; an LP-aware quote that also simulates the AMM portion is on the roadmap). The stock v4
+least as good; for the **exact hybrid blend** use `WstGBPHybridQuoter`, below). The stock v4
 `Quoter` is swap-first and **reverts** on this hook, so use one of:
 
 - **Off-chain formula** (live values from `wstGBP.mintcost()` / `burncost()`, both WAD):
@@ -128,10 +128,15 @@ least as good; an LP-aware quote that also simulates the AMM portion is on the r
   - sell exact-in: `tGBP_out = wstGBP_in * burncost / 1e18`
   - buy exact-out: `tGBP_in = ceil(wstGBP_out * mintcost / 1e18)`
   - sell exact-out: `wstGBP_in = ceil(tGBP_out * 1e18 / burncost)`
-- **On-chain quoter** `src/periphery/WstGBPQuoter.sol` — `quoteExactInput`/`quoteExactOutput` return
-  the backstop price (exact with no LP; a ceiling on buy cost / floor on sell proceeds when LP is
-  present), and `previewSwap(zeroForOne, amountSpecified)` also returns `(executable, reason)` (checks
-  market open, dust thresholds, buy capacity, sell funding).
+- **On-chain backstop quoter** `src/periphery/WstGBPQuoter.sol` — `quoteExactInput`/`quoteExactOutput`
+  return the backstop price (exact with no LP; a ceiling on buy cost / floor on sell proceeds when LP
+  is present), and `previewSwap(zeroForOne, amountSpecified)` also returns `(executable, reason)`
+  (checks market open, dust thresholds, buy capacity, sell funding, redeem cooldown).
+- **On-chain LP-aware quoter** `src/periphery/WstGBPHybridQuoter.sol` — for the hybrid hook:
+  `quoteExactInput(key, …)` / `quoteExactOutput(key, …)` return the **exact** blended price by
+  replaying v4's `Pool.swap` over live pool state (`StateLibrary`) to the backstop edge, then pricing
+  the residual at the oracle. Fork-validated `quote == execution` for all four modes (+ fuzz). Takes a
+  `PoolKey` and the PoolManager; assumes a static LP fee (deployed pools aren't dynamic-fee).
 
 Execute via `src/periphery/WstGBPSwapRouter.sol` (settle-first):
 `swapExactInput(key, zeroForOne, amountIn, minAmountOut, recipient, deadline)` and
@@ -182,11 +187,11 @@ hook is mined+deployed on the fork. The MaseerGate is forced open via
 
 ## Roadmap / open work
 
-Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. Done: the single
-best-execution hook (M1 + M2 consolidated), settle-first router with slippage/deadline/recipient, the
-backstop quoter, and deploy wiring. Open headlines:
+Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. Done: both hooks,
+settle-first router with slippage/deadline/recipient + exact-output full-delivery, the backstop quoter,
+the **LP-aware `WstGBPHybridQuoter`** (exact hybrid blend, fork-validated), deploy wiring, a security
+review pass (F1 redeem-validation + cooldown fallback fixed; trust model in `README.md`), and test
+hardening (capacity, pricing fuzz, LP-quote==execution fuzz). Open headlines:
 
-- **LP-aware quoter:** the current quoter prices only the backstop; a hybrid quote must also simulate
-  the in-band AMM portion.
-- **Hardening:** capacity-exceeded test, fuzz, integrator events, audit prep, pin submodule tags,
-  optional Permit2 entrypoint on the router.
+- **Hardening:** integrator events, pin submodule tags (needs a git repo), optional Permit2 entrypoint
+  on the router, and the F2/F3 sub-unit-dust edges (documented, accepted).
