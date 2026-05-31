@@ -25,8 +25,9 @@ Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
       cooldown).
 - [x] Deploy script — `script/DeployHook.s.sol` (mines flags `0x88`, CREATE2, pool init fee 5bps /
       tickSpacing 60, deploys router + quoter).
-- [x] Mainnet-fork tests (27): `test/WstGBPBackstopHook.t.sol` (17 — pricing, router hardening,
-      quoter, guards) + `test/WstGBPHybridHook.t.sol` (10 — LP blend, no-LP parity, guards).
+- [x] Mainnet-fork tests (58): `test/WstGBPBackstopHook.t.sol` (27 — pricing, router hardening,
+      quoter, guards) + `test/WstGBPHybridHook.t.sol` (31 — LP blend, no-LP parity, guards,
+      sub-threshold-residual refund/revert).
 
 ## Design invariants (do NOT regress without a deliberate decision)
 
@@ -121,8 +122,18 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
 
 - [x] Integrator events — `WstGBPSwapRouter` emits `Swap(payer, recipient, poolId, zeroForOne,
       amountIn, amountOut)` once per swap (all four entrypoints), beyond the PoolManager's own `Swap`.
-- [x] Security review / audit prep pass — done (report: `~/.claude/plans/please-deep-dive-this-...md`).
+- [x] Security review / audit prep pass — done (reports under `~/.claude/plans/`).
       Fixed F1 (`RedeemUnderpaid` + cooldown handling: hybrid sells fall back to LP, backstop reverts;
       router enforces exact-output full delivery). Trust model documented in `README.md` (F4).
+- [x] Second deep-dive (charge-only-what's-filled): fixed the hybrid **sub-threshold residual** edges.
+      EXACT-IN now refunds the un-wrappable dust (`_backstopExactIn` returns `inConsumed`; `_beforeSwap`
+      bills `ammIn + inConsumed`) instead of charging the full input for zero output. EXACT-OUT reverts
+      `BackstopResidualTooSmall` instead of clamping the input up to `mintcost`/`WAD` and overcharging
+      (which had made the hybrid *worse* than the pure backstop and left ~1 token of locked dust in the
+      hook). The hook now keeps no dust on these paths; `WstGBPHybridQuoter` mirrors both (exact-in is a
+      lower bound, `quoteExactOutput` reverts, `previewSwap` flags `"residual below wrapper threshold"`).
+      Regression tests added to `test/WstGBPHybridHook.t.sol`. Low/info items deferred to external audit:
+      hook doesn't pin `fee`/`tickSpacing`, no `beforeInitialize` guard, redundant `_inNestedSwap`,
+      `_edgeSqrtPrice` double-floor, exact-out capacity 1-wei window.
 - [ ] Pin `lib/v4-core` / `lib/v4-periphery` to tagged releases in `.gitmodules` (currently
       periphery `363226d`, core `v4.0.0`). Note: working dir is not a git repo here.

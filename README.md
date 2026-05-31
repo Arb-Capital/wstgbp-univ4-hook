@@ -86,7 +86,8 @@ forge test --match-test test_buyExactInput -vvv      # single test
 forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
 ```
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (35 tests:
-23 pure-backstop + 12 hybrid, including pricing fuzz, capacity, and cooldown-fallback cases). Deploy
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (58 tests:
+27 pure-backstop + 31 hybrid, including pricing fuzz, capacity, cooldown-fallback, and the hybrid
+sub-threshold-residual refund/revert cases). Deploy
 with env `HOOK=hybrid` (default) or `HOOK=backstop`; the hook address is CREATE2-mined for its
 permission flags and must not be on the tGBP/wstGBP ban list.

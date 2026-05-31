@@ -163,14 +163,16 @@ forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --privat
 
 Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canonical PoolManager; the
 hook is mined+deployed on the fork. The MaseerGate is forced open via
-`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. Two suites (27 tests):
-- `test/WstGBPBackstopHook.t.sol` (17) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
-  round-trip, quoter == execution (4 modes), `previewSwap` flags, router hardening (minOut / maxIn /
-  deadline / recipient / surplus refund), LP-add revert, market-closed + underfunded reverts,
-  swap-first routing reverting.
-- `test/WstGBPHybridHook.t.sol` (10) — the hybrid with real LP: buy/sell × exact-in/out blend LP then
+`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. Two suites (58 tests):
+- `test/WstGBPBackstopHook.t.sol` (27) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
+  round-trip, quoter == execution (4 modes + fuzz), `previewSwap` flags, router hardening (minOut /
+  maxIn / deadline / recipient / surplus refund, Permit2), LP-add revert, market-closed + underfunded
+  + cooldown + capacity reverts, swap-first routing reverting.
+- `test/WstGBPHybridHook.t.sol` (31) — the hybrid with real LP: buy/sell × exact-in/out blend LP then
   backstop and beat the pure-backstop price; no-LP ⇒ exact backstop; price-past-edge ⇒ AMM skipped +
-  out-of-band LP ignored; large swap; LP earns the fee; market-closed + underfunded reverts.
+  out-of-band LP ignored; large swap; LP earns the fee; cooldown LP-only fallback; LP-quote ==
+  execution (4 modes + fuzz); and the **sub-threshold residual** edges (exact-in dust refunded not
+  charged; exact-out residual reverts `BackstopResidualTooSmall`; quoter parity).
 
 ## Dependencies / toolchain
 
@@ -187,6 +189,13 @@ hook is mined+deployed on the fork. The MaseerGate is forced open via
   vendored `src/base/BaseHook.sol`.
 - `wstGBP.redeem` returns an **id, not an amount**, and can underpay — always balance-diff and
   pre-check funding.
+- **Hybrid sub-threshold residual:** in `WstGBPHybridHook`, a backstop residual below the wrapper's
+  mint/redeem threshold (`< mintcost` for buys / `< 1 wstGBP` for sells) can't be wrapped. Exact-input
+  **refunds** it (bills only the AMM-filled leg, `ammIn + inConsumed`); exact-output **reverts**
+  `BackstopResidualTooSmall` (it never clamps the input up to overcharge, so the hybrid is never worse
+  than the pure backstop and the hook keeps no dust). `WstGBPHybridQuoter` mirrors both: the exact-in
+  quote is a *lower bound* there, and `quoteExactOutput` reverts / `previewSwap` flags it
+  (`"residual below wrapper threshold"`).
 - v4 `PoolSwapTest` refunds leftover native balance to `msg.sender`; test/integrator contracts that
   call it need a payable `receive()`.
 - Swaps must be settle-first (input paid before `swap`). Stock swap-first routers revert on `take`;
@@ -197,9 +206,10 @@ hook is mined+deployed on the fork. The MaseerGate is forced open via
 Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. Done: both hooks,
 settle-first router with slippage/deadline/recipient + exact-output full-delivery, the backstop quoter,
 the **LP-aware `WstGBPHybridQuoter`** (exact hybrid blend, fork-validated), deploy wiring, a security
-review pass (F1 redeem-validation + cooldown fallback fixed; trust model in `README.md`), test
-hardening (capacity, pricing fuzz, LP-quote==execution fuzz), the hybrid `previewSwap`, Permit2 router
-entrypoints, and router `Swap` events. Open headlines:
+review pass (F1 redeem-validation + cooldown fallback fixed; F2/F3 hybrid sub-threshold-residual edges
+fixed — exact-in refunds, exact-out reverts `BackstopResidualTooSmall`, no dust capture, quoter mirrors;
+trust model in `README.md`), test hardening (capacity, pricing fuzz, LP-quote==execution fuzz), the
+hybrid `previewSwap`, Permit2 router entrypoints, and router `Swap` events. Open headlines:
 
-- **Hardening:** pin submodule tags (needs a git repo) and the F2/F3 sub-unit-dust edges (documented,
-  accepted). An external audit is the real gate before mainnet.
+- **Hardening:** pin submodule tags (needs a git repo). An external audit is the real gate before
+  mainnet.

@@ -60,6 +60,7 @@ contract WstGBPHybridHook is BaseHook {
     error PoolNotSupported();
     error WrapperUnderfunded(uint256 needed, uint256 available);
     error RedeemUnderpaid(uint256 expected, uint256 received);
+    error BackstopResidualTooSmall();
     error TransferFailed();
 
     constructor(IPoolManager _poolManager, IwstGBP _wrapper) BaseHook(_poolManager) {
@@ -125,10 +126,16 @@ contract WstGBPHybridHook is BaseHook {
         //    the outer AMM is a no-op; the unspecified leg is the combined input/output.
         BeforeSwapDelta delta;
         if (params.amountSpecified < 0) {
-            // EXACT-INPUT: backstop the residual input; deliver AMM output + backstop output.
+            // EXACT-INPUT: backstop the residual input; deliver AMM output + backstop output. A residual
+            // below the wrapper's mint/redeem threshold can't be backstopped, so it is neither taken nor
+            // charged — only `ammIn + inConsumed` is billed, and the unfillable remainder is left in the
+            // PoolManager for the router to refund (or for the outer AMM to fill as bonus output). The
+            // hook keeps no dust.
             uint256 amountIn = uint256(-params.amountSpecified);
-            uint256 totalOut = ammOut + _backstopExactIn(params.zeroForOne, amountIn - ammIn);
-            delta = toBeforeSwapDelta(amountIn.toInt128(), -totalOut.toInt128());
+            (uint256 bOut, uint256 inConsumed) = _backstopExactIn(params.zeroForOne, amountIn - ammIn);
+            uint256 totalOut = ammOut + bOut;
+            uint256 totalIn = ammIn + inConsumed;
+            delta = toBeforeSwapDelta(totalIn.toInt128(), -totalOut.toInt128());
         } else {
             // EXACT-OUTPUT: backstop the residual output; charge AMM input + backstop input.
             uint256 amountOut = uint256(params.amountSpecified);
@@ -162,29 +169,32 @@ contract WstGBPHybridHook is BaseHook {
         }
     }
 
-    /// @dev Exact-input backstop: consume `residualIn` of the input currency via the wrapper and
-    ///      settle the resulting output to the PoolManager; returns the output produced. The hook's
-    ///      input-side delta is reconciled by the combined `BeforeSwapDelta` from `_beforeSwap`.
-    function _backstopExactIn(bool zeroForOne, uint256 residualIn) internal returns (uint256 out) {
-        if (residualIn == 0) return 0;
+    /// @dev Exact-input backstop. Returns the output produced AND the input actually consumed. A
+    ///      residual below the wrapper's mint/redeem threshold can't be wrapped, so it is left
+    ///      untouched (NOT taken from the PoolManager): the caller bills only `inConsumed`, and the
+    ///      router refunds the remainder — the hook keeps no dust. Output is settled to the
+    ///      PoolManager; the input-side delta is reconciled by the combined `BeforeSwapDelta`.
+    function _backstopExactIn(bool zeroForOne, uint256 residualIn) internal returns (uint256 out, uint256 inConsumed) {
+        if (residualIn == 0) return (0, 0);
 
         if (zeroForOne) {
-            // BUY: take residual tGBP from PM, mint wstGBP, settle it to PM.
+            // BUY: below the mint threshold the wrapper can't mint; leave it for the router to refund.
+            if (residualIn < wrapper.mintcost()) return (0, 0);
             poolManager.take(currency0, address(this), residualIn);
-            // Dust below the wrapper's mint threshold can't be minted; keep it (rare, sub-unit).
-            if (residualIn < wrapper.mintcost()) return 0;
             out = wrapper.mint(residualIn);
             _settleToManager(currency1, out);
+            inConsumed = residualIn;
         } else {
-            // SELL: take residual wstGBP from PM, redeem for tGBP, settle it to PM.
-            poolManager.take(currency1, address(this), residualIn);
-            if (residualIn < WAD) return 0; // below redeem minimum; keep as dust
+            // SELL: below the redeem minimum the wrapper can't redeem; leave it for the router to refund.
+            if (residualIn < WAD) return (0, 0);
             uint256 claim = FullMath.mulDiv(residualIn, wrapper.burncost(), WAD);
             _requireWrapperFunded(claim);
+            poolManager.take(currency1, address(this), residualIn);
             out = _redeem(residualIn);
             // Guard against a non-atomic (cooldown()>0) redeem silently paying nothing.
             if (out < claim) revert RedeemUnderpaid(claim, out);
             _settleToManager(currency0, out);
+            inConsumed = residualIn;
         }
     }
 
@@ -200,16 +210,21 @@ contract WstGBPHybridHook is BaseHook {
             // BUY exact-out: need `residualOut` wstGBP; pay tGBP.
             uint256 mc = wrapper.mintcost();
             uint256 tgbpIn = FullMath.mulDivRoundingUp(residualOut, mc, WAD);
-            if (tgbpIn < mc) tgbpIn = mc; // keep mint() above the dust threshold (rare sub-unit residual)
+            // A sub-threshold residual can't be minted at a fair price (the wrapper needs >= mintcost
+            // in). Revert rather than clamp the input up and overcharge the swapper for the shortfall
+            // (which would also make the hybrid worse than the pure backstop and leave dust in the hook).
+            if (tgbpIn < mc) revert BackstopResidualTooSmall();
             poolManager.take(currency0, address(this), tgbpIn);
-            wrapper.mint(tgbpIn); // mints >= residualOut wstGBP; surplus stays as dust
+            wrapper.mint(tgbpIn); // mints >= residualOut wstGBP; <= 1 wei rounding surplus stays as dust
             _settleToManager(currency1, residualOut);
             inSpent = tgbpIn;
         } else {
             // SELL exact-out: need `residualOut` tGBP; pay wstGBP.
             uint256 bc = wrapper.burncost();
             uint256 wIn = FullMath.mulDivRoundingUp(residualOut, WAD, bc);
-            if (wIn < WAD) wIn = WAD; // keep redeem() above its minimum
+            // A sub-threshold residual can't be redeemed (the wrapper needs >= 1 wstGBP in). Revert
+            // rather than clamp the input up and overcharge the swapper.
+            if (wIn < WAD) revert BackstopResidualTooSmall();
             uint256 claim = FullMath.mulDiv(wIn, bc, WAD); // >= residualOut
             _requireWrapperFunded(claim);
             poolManager.take(currency1, address(this), wIn);

@@ -11,6 +11,7 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {CustomRevert} from "@uniswap/v4-core/src/libraries/CustomRevert.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
@@ -410,6 +411,101 @@ contract WstGBPHybridHookForkTest is Test {
         (,, bool executable, string memory reason) = hybridQuoter.previewSwap(key, true, -int256(600_000 * WAD));
         assertFalse(executable, "backstop residual mint exceeds capacity");
         assertEq(reason, "exceeds capacity", "reason");
+    }
+
+    // --- Sub-threshold residual handling (H1/H2/H3 regression: "charge only what's filled") ---
+    // On a no-LP pool the AMM fills nothing, so the whole swap is the backstop residual and the
+    // sub-threshold edges are deterministic.
+
+    /// @dev EXACT-OUTPUT buy whose residual is below the mint threshold must REVERT (not clamp the
+    ///      input up and overcharge ~1 token, as the old code did).
+    function test_exactOutputBuySubThresholdResidualReverts() public {
+        PoolKey memory k = _freshNoLpPool();
+        // maxAmountIn is the router's pre-settle amount, so keep it affordable; the hook reverts inside.
+        _expectHookReverts(WstGBPHybridHook.BackstopResidualTooSmall.selector);
+        router.swapExactOutput(k, true, WAD / 2, 10 * WAD, address(this), block.timestamp);
+    }
+
+    /// @dev EXACT-OUTPUT sell whose residual is below the redeem minimum must REVERT.
+    function test_exactOutputSellSubThresholdResidualReverts() public {
+        PoolKey memory k = _freshNoLpPool();
+        _expectHookReverts(WstGBPHybridHook.BackstopResidualTooSmall.selector);
+        router.swapExactOutput(k, false, WAD / 2, 10 * WAD, address(this), block.timestamp);
+    }
+
+    /// @dev The quoter mirrors the hook: previewSwap flags the sub-threshold residual and
+    ///      quoteExactOutput reverts, so a quote never reports a fillable input for a reverting swap.
+    function test_subThresholdResidualQuoterParity() public {
+        PoolKey memory k = _freshNoLpPool();
+        (,, bool executable, string memory reason) = hybridQuoter.previewSwap(k, true, int256(WAD / 2));
+        assertFalse(executable, "sub-threshold exact-out residual is not executable");
+        assertEq(reason, "residual below wrapper threshold", "reason");
+        vm.expectRevert(WstGBPHybridQuoter.BackstopResidualTooSmall.selector);
+        hybridQuoter.quoteExactOutput(k, true, WAD / 2);
+    }
+
+    /// @dev EXACT-INPUT buy below the mint threshold: the input must be REFUNDED (not charged for
+    ///      zero output and pocketed as dust, as the old code did). The hook keeps nothing.
+    function test_exactInputBuyDustRefundedNotCharged() public {
+        PoolKey memory k = _freshNoLpPool();
+        uint256 t0 = _bal(TGBP, address(this));
+        uint256 w0 = _bal(WST, address(this));
+
+        uint256 out = router.swapExactInput(k, true, WAD / 2, 0, address(this), block.timestamp);
+
+        assertEq(out, 0, "un-mintable dust yields no output");
+        assertEq(_bal(TGBP, address(this)), t0, "dust input refunded in full (not charged)");
+        assertEq(_bal(WST, address(this)), w0, "no wstGBP delivered");
+        assertEq(_bal(TGBP, address(hook)), 0, "hook kept no tGBP dust");
+        assertEq(_bal(WST, address(hook)), 0, "hook kept no wstGBP dust");
+    }
+
+    /// @dev EXACT-INPUT sell below the redeem minimum: the wstGBP input must be REFUNDED; hook clean.
+    function test_exactInputSellDustRefundedNotCharged() public {
+        PoolKey memory k = _freshNoLpPool();
+        uint256 t0 = _bal(TGBP, address(this));
+        uint256 w0 = _bal(WST, address(this));
+
+        uint256 out = router.swapExactInput(k, false, WAD / 2, 0, address(this), block.timestamp);
+
+        assertEq(out, 0, "un-redeemable dust yields no output");
+        assertEq(_bal(WST, address(this)), w0, "dust input refunded in full (not charged)");
+        assertEq(_bal(TGBP, address(this)), t0, "no tGBP delivered");
+        assertEq(_bal(TGBP, address(hook)), 0, "hook kept no tGBP dust");
+        assertEq(_bal(WST, address(hook)), 0, "hook kept no wstGBP dust");
+    }
+
+    /// @dev A wholly-dust exact-input swap with a real slippage floor reverts via the router rather
+    ///      than silently delivering nothing.
+    function test_exactInputWhollyDustRevertsViaMinOut() public {
+        PoolKey memory k = _freshNoLpPool();
+        vm.expectRevert(abi.encodeWithSelector(WstGBPSwapRouter.InsufficientOutput.selector, 0, 1));
+        router.swapExactInput(k, true, WAD / 2, 1, address(this), block.timestamp);
+    }
+
+    /// @dev v4 wraps a reverting `beforeSwap` in `CustomRevert.WrappedError(hook, beforeSwap.selector,
+    ///      <inner error>, HookCallFailed)`. Assert the inner error is exactly `inner`.
+    function _expectHookReverts(bytes4 inner) internal {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CustomRevert.WrappedError.selector,
+                address(hook),
+                IHooks.beforeSwap.selector,
+                abi.encodeWithSelector(inner),
+                abi.encodeWithSelector(Hooks.HookCallFailed.selector)
+            )
+        );
+    }
+
+    function _freshNoLpPool() internal returns (PoolKey memory k) {
+        k = PoolKey({
+            currency0: Currency.wrap(TGBP),
+            currency1: Currency.wrap(WST),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(hook))
+        });
+        PM.initialize(k, TickMath.getSqrtPriceAtTick(0));
     }
 
     function _bal(address t, address who) internal view returns (uint256) {

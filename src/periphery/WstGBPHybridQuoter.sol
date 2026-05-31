@@ -22,6 +22,12 @@ import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 ///         the exact blend the hook executes. Unlike {WstGBPQuoter} (backstop-only, a conservative
 ///         bound when LP is present), this returns the *exact* hybrid output/input including the LP leg.
 ///
+///         Two edge behaviours mirror the hook: (1) on EXACT-INPUT, a residual below the wrapper's
+///         mint/redeem threshold is dropped (refunded by the router / filled as bonus output), so
+///         `quoteExactInput` is a *lower bound* in that rare case (execution never delivers less);
+///         (2) on EXACT-OUTPUT, a sub-threshold residual can't be filled at a fair price, so
+///         `quoteExactOutput` reverts `BackstopResidualTooSmall` and `previewSwap` reports it.
+///
 /// @dev The AMM leg is a pure-view replay of v4's `Pool.swap` loop over live pool state read via
 ///      `StateLibrary` (slot0, liquidity, tick bitmap, tick net-liquidity), bounded at the same `edge`
 ///      `sqrtPrice` the hook uses; the backstop leg mirrors `WstGBPHybridHook._backstop*` arithmetic
@@ -42,6 +48,10 @@ contract WstGBPHybridQuoter {
     IwstGBP public immutable wrapper;
     IPoolManager public immutable poolManager;
     address public immutable tgbp;
+
+    /// @dev Mirrors `WstGBPHybridHook`: an exact-output swap whose backstop residual is below the
+    ///      wrapper's mint/redeem threshold reverts (it can't be filled at a fair price).
+    error BackstopResidualTooSmall();
 
     constructor(IwstGBP _wrapper, IPoolManager _poolManager) {
         wrapper = _wrapper;
@@ -70,7 +80,11 @@ contract WstGBPHybridQuoter {
         view
         returns (uint256 amountIn)
     {
-        (amountIn,,) = _quoteOut(key, zeroForOne, amountOut);
+        bool residualTooSmall;
+        (amountIn,,, residualTooSmall) = _quoteOut(key, zeroForOne, amountOut);
+        // The hook reverts when the backstop residual is below the wrapper threshold; mirror it so a
+        // quote never reports a fillable input for a swap that would revert on execution.
+        if (residualTooSmall) revert BackstopResidualTooSmall();
     }
 
     /// @notice Quote a swap (same `amountSpecified` convention as `PoolManager.swap`) AND report whether
@@ -93,7 +107,10 @@ contract WstGBPHybridQuoter {
             (amountOut, backstopMintOut, backstopClaim) = _quoteIn(key, zeroForOne, amountIn);
         } else {
             amountOut = uint256(amountSpecified);
-            (amountIn, backstopMintOut, backstopClaim) = _quoteOut(key, zeroForOne, amountOut);
+            bool residualTooSmall;
+            (amountIn, backstopMintOut, backstopClaim, residualTooSmall) = _quoteOut(key, zeroForOne, amountOut);
+            // The hook reverts on a sub-threshold backstop residual; report it gracefully here.
+            if (residualTooSmall) return (amountIn, amountOut, false, "residual below wrapper threshold");
         }
         (executable, reason) = _check(zeroForOne, backstopMintOut, backstopClaim);
     }
@@ -114,17 +131,20 @@ contract WstGBPHybridQuoter {
     }
 
     /// @dev Exact-output blend + the backstop-leg sizes used for the executability check.
+    ///      `residualTooSmall` is true when the backstop residual is below the wrapper threshold —
+    ///      the hook reverts in that case, so the returned `amountIn` is not a fillable quote.
     function _quoteOut(PoolKey calldata key, bool zeroForOne, uint256 amountOut)
         internal
         view
-        returns (uint256 amountIn, uint256 backstopMintOut, uint256 backstopClaim)
+        returns (uint256 amountIn, uint256 backstopMintOut, uint256 backstopClaim, bool residualTooSmall)
     {
         uint160 edge = _edgeSqrtPrice(zeroForOne, key.fee);
         (uint256 ammIn, uint256 ammOut) = _simulateAmm(key, zeroForOne, int256(amountOut), edge);
         uint256 residualOut = amountOut - ammOut;
-        uint256 backstopIn = _backstopInForOut(zeroForOne, residualOut);
+        uint256 backstopIn;
+        (backstopIn, residualTooSmall) = _backstopInForOut(zeroForOne, residualOut);
         amountIn = ammIn + backstopIn;
-        if (residualOut > 0) {
+        if (residualOut > 0 && !residualTooSmall) {
             if (zeroForOne) backstopMintOut = FullMath.mulDiv(backstopIn, WAD, wrapper.mintcost());
             else backstopClaim = FullMath.mulDiv(backstopIn, wrapper.burncost(), WAD);
         }
@@ -296,18 +316,23 @@ contract WstGBPHybridQuoter {
         }
     }
 
-    function _backstopInForOut(bool zeroForOne, uint256 residualOut) internal view returns (uint256) {
-        if (residualOut == 0) return 0;
+    /// @dev Input the backstop needs for `residualOut`, plus a `tooSmall` flag set when that residual
+    ///      is below the wrapper threshold — the hook reverts there (no clamp), so the returned input
+    ///      is not a fillable quote.
+    function _backstopInForOut(bool zeroForOne, uint256 residualOut)
+        internal
+        view
+        returns (uint256 inNeeded, bool tooSmall)
+    {
+        if (residualOut == 0) return (0, false);
         if (zeroForOne) {
             uint256 mc = wrapper.mintcost();
             uint256 tgbpIn = FullMath.mulDivRoundingUp(residualOut, mc, WAD);
-            if (tgbpIn < mc) tgbpIn = mc; // hook clamps sub-unit residual up to the mint threshold
-            return tgbpIn;
+            return (tgbpIn, tgbpIn < mc); // hook reverts when the residual is below the mint threshold
         } else {
             uint256 bc = wrapper.burncost();
             uint256 wIn = FullMath.mulDivRoundingUp(residualOut, WAD, bc);
-            if (wIn < WAD) wIn = WAD; // hook clamps sub-unit residual up to the redeem minimum
-            return wIn;
+            return (wIn, wIn < WAD); // hook reverts when the residual is below the redeem minimum
         }
     }
 
