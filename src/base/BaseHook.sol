@@ -29,8 +29,12 @@ abstract contract BaseHook is IHooks {
     }
 
     modifier onlyPoolManager() {
-        if (msg.sender != address(poolManager)) revert NotPoolManager();
+        _checkPoolManager();
         _;
+    }
+
+    function _checkPoolManager() internal view {
+        if (msg.sender != address(poolManager)) revert NotPoolManager();
     }
 
     /// @notice The permission bits this hook expects to be encoded in its address.

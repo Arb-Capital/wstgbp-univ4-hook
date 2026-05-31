@@ -14,10 +14,10 @@ import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {BeforeSwapDelta, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 
@@ -294,7 +294,24 @@ contract WstGBPHybridHook is BaseHook {
     }
 
     function _safeTransfer(address token, address to, uint256 amount) internal {
-        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
-        if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
+        bool ok;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
+            mstore(add(ptr, 0x04), to)
+            mstore(add(ptr, 0x24), amount)
+
+            ok := call(gas(), token, 0, ptr, 0x44, 0, 0x20)
+            if ok {
+                switch returndatasize()
+                case 0 { ok := 1 }
+                case 0x20 {
+                    returndatacopy(ptr, 0, 0x20)
+                    ok := iszero(iszero(mload(ptr)))
+                }
+                default { ok := 0 }
+            }
+        }
+        if (!ok) revert TransferFailed();
     }
 }
