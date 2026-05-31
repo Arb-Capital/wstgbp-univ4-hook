@@ -93,6 +93,9 @@ contract WstGBPQuoter {
         } else {
             // SELL: redeem `amountIn` wstGBP for tGBP.
             if (!wrapper.burnable()) return (false, "burn market closed");
+            // The hook's redeem only settles atomically when cooldown is 0; otherwise the sell would
+            // burn wstGBP without paying out, so the hook reverts `RedeemUnderpaid`.
+            if (wrapper.cooldown() != 0) return (false, "redeem cooldown active");
             if (amountIn < WAD) return (false, "below redeem minimum");
             uint256 claim = FullMath.mulDiv(amountIn, wrapper.burncost(), WAD);
             if (IERC20Minimal(tgbp).balanceOf(address(wrapper)) < claim) return (false, "wrapper underfunded");

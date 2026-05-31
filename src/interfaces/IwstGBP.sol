@@ -48,6 +48,10 @@ interface IwstGBP {
     /// @notice The maximum total wstGBP supply allowed (18 decimals); mints reverting past it.
     function capacity() external view returns (uint256);
 
+    /// @notice The redemption cooldown in seconds. MUST be 0 for the hook's redeem to settle tGBP
+    ///         atomically in the same call; a non-zero value defers payout and breaks the sell path.
+    function cooldown() external view returns (uint256);
+
     /// @notice Total wstGBP supply (18 decimals). Used with `capacity()` to check buy headroom.
     function totalSupply() external view returns (uint256);
 

@@ -44,6 +44,8 @@ contract WstGBPBackstopHook is BaseHook {
     error PoolNotSupported();
     error LiquidityNotAllowed();
     error WrapperUnderfunded(uint256 needed, uint256 available);
+    error RedeemUnderpaid(uint256 expected, uint256 received);
+    error RedeemCooldownActive();
     error TransferFailed();
 
     constructor(IPoolManager _poolManager, IwstGBP _wrapper) BaseHook(_poolManager) {
@@ -96,6 +98,11 @@ contract WstGBPBackstopHook is BaseHook {
             revert PoolNotSupported();
         }
 
+        // Sells need an atomic redeem; a non-zero cooldown defers the wrapper's payout (incompatible
+        // with an atomic swap) and this pool has no LP to fall back to, so reject the sell outright
+        // rather than burn wstGBP into a deferred, hook-owned redemption.
+        if (!params.zeroForOne && wrapper.cooldown() != 0) revert RedeemCooldownActive();
+
         bool exactInput = params.amountSpecified < 0;
         uint256 specifiedAmount = (exactInput ? uint256(-params.amountSpecified) : uint256(params.amountSpecified));
         specifiedAmount.toInt128(); // bound
@@ -129,6 +136,9 @@ contract WstGBPBackstopHook is BaseHook {
                 _requireWrapperFunded(claim);
                 poolManager.take(currency1, address(this), wIn);
                 uint256 received = _redeem(wIn);
+                // The funded pre-check assumes an atomic (cooldown()==0) redeem; assert the wrapper
+                // actually paid the full claim so a cooldown change can't silently zero the output.
+                if (received < claim) revert RedeemUnderpaid(claim, received);
                 _settleToManager(currency0, received);
                 deltaSpecified = wIn.toInt128();
                 deltaUnspecified = -received.toInt128();
@@ -138,7 +148,8 @@ contract WstGBPBackstopHook is BaseHook {
                 uint256 claim = FullMath.mulDiv(wIn, wrapper.burncost(), WAD); // >= tOut
                 _requireWrapperFunded(claim);
                 poolManager.take(currency1, address(this), wIn);
-                _redeem(wIn); // returns >= tOut; surplus stays as dust
+                uint256 received = _redeem(wIn); // returns >= tOut; surplus stays as dust
+                if (received < tOut) revert RedeemUnderpaid(tOut, received);
                 _settleToManager(currency0, tOut);
                 deltaSpecified = -tOut.toInt128();
                 deltaUnspecified = wIn.toInt128();

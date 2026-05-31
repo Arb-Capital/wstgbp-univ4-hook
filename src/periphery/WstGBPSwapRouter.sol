@@ -85,7 +85,10 @@ contract WstGBPSwapRouter is IUnlockCallback {
         address recipient,
         uint256 deadline
     ) external ensure(deadline) returns (uint256 amountIn) {
-        (amountIn,) = _execute(key, zeroForOne, int256(amountOut), maxAmountIn, 0, recipient);
+        // Enforce full delivery of the requested output (min == amountOut): the backstop always fills
+        // exactly, but if a swap is served by pool liquidity only (e.g. the hook steps aside) a shallow
+        // AMM could otherwise under-deliver and silently short-change the recipient.
+        (amountIn,) = _execute(key, zeroForOne, int256(amountOut), maxAmountIn, amountOut, recipient);
     }
 
     function _execute(

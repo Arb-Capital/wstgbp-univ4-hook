@@ -222,6 +222,29 @@ contract WstGBPBackstopHookForkTest is Test {
         _swapIn(false, 1_000 * WAD);
     }
 
+    /// @notice F1 regression: a non-zero redemption cooldown makes `wstGBP.redeem` defer payout, so a
+    ///         sell would burn the seller's wstGBP for ~0 tGBP. With `minAmountOut == 0` there is no
+    ///         slippage backstop, so the hook itself must revert (`RedeemUnderpaid`) for both
+    ///         exact-in and exact-out sells; buys are unaffected, and the quoter flags it off-chain.
+    function test_sellRevertsWhenRedeemCooldownActive() public {
+        vm.store(ACT, COOLDOWN_SLOT, bytes32(uint256(1 days)));
+        assertEq(wrapper.cooldown(), 1 days, "cooldown set");
+
+        (,, bool executable, string memory reason) = quoter.previewSwap(false, -int256(1_000 * WAD));
+        assertFalse(executable, "preview not executable under cooldown");
+        assertEq(reason, "redeem cooldown active", "preview reason");
+
+        // Both sell directions revert instead of silently delivering ~0 output (minAmountOut == 0).
+        vm.expectRevert();
+        _swapIn(false, 1_000 * WAD);
+        vm.expectRevert();
+        _swapOut(false, 1_000 * WAD, 2_000 * WAD);
+
+        // Buys mint atomically regardless of redemption cooldown.
+        assertEq(_swapIn(true, 1_000 * WAD), 1_000 * WAD * WAD / wrapper.mintcost(), "buy unaffected");
+        _assertHookClean();
+    }
+
     function test_swapFirstRoutingIsUnsupported() public {
         vm.expectRevert();
         swapFirstRouter.swap(

@@ -59,6 +59,7 @@ contract WstGBPHybridHook is BaseHook {
     error BadCurrencyOrdering();
     error PoolNotSupported();
     error WrapperUnderfunded(uint256 needed, uint256 available);
+    error RedeemUnderpaid(uint256 expected, uint256 received);
     error TransferFailed();
 
     constructor(IPoolManager _poolManager, IwstGBP _wrapper) BaseHook(_poolManager) {
@@ -102,6 +103,15 @@ contract WstGBPHybridHook is BaseHook {
 
         if (Currency.unwrap(key.currency0) != tgbp || Currency.unwrap(key.currency1) != wst) {
             revert PoolNotSupported();
+        }
+
+        // A non-zero redemption cooldown makes `wstGBP.redeem` non-atomic, so the sell backstop cannot
+        // settle within the swap. Fall back to pool liquidity only: step aside (zero delta) so the
+        // outer AMM fills the sell against in-range LP. The swapper is protected by the router's
+        // slippage bounds (minAmountOut on exact-in, full-delivery on exact-out). Buys are unaffected
+        // because mint is always atomic.
+        if (!params.zeroForOne && wrapper.cooldown() != 0) {
+            return (IHooks.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0);
         }
 
         // 1) Fill in-band LP via a nested AMM swap bounded at the fee-adjusted backstop edge.
@@ -169,6 +179,8 @@ contract WstGBPHybridHook is BaseHook {
             uint256 claim = FullMath.mulDiv(residualIn, wrapper.burncost(), WAD);
             _requireWrapperFunded(claim);
             out = _redeem(residualIn);
+            // Guard against a non-atomic (cooldown()>0) redeem silently paying nothing.
+            if (out < claim) revert RedeemUnderpaid(claim, out);
             _settleToManager(currency0, out);
         }
     }
@@ -198,7 +210,8 @@ contract WstGBPHybridHook is BaseHook {
             uint256 claim = FullMath.mulDiv(wIn, bc, WAD); // >= residualOut
             _requireWrapperFunded(claim);
             poolManager.take(currency1, address(this), wIn);
-            _redeem(wIn); // returns >= residualOut tGBP; surplus stays as dust
+            uint256 received = _redeem(wIn); // returns >= residualOut tGBP; surplus stays as dust
+            if (received < residualOut) revert RedeemUnderpaid(residualOut, received);
             _settleToManager(currency0, residualOut);
             inSpent = wIn;
         }

@@ -233,6 +233,59 @@ contract WstGBPHybridHookForkTest is Test {
         assertEq(received, backstopOnly, "no LP => exactly pure-backstop price (== M1)");
     }
 
+    /// @notice Under a non-zero redemption cooldown the redeem backstop can't settle atomically, so a
+    ///         hybrid SELL must fall back to pool liquidity only (no redeem) while BUYS keep
+    ///         backstopping (mint is always atomic). Verified by the wrapper supply staying flat.
+    function test_sellFallsBackToLpWhenCooldownActive() public {
+        vm.store(ACT, COOLDOWN_SLOT, bytes32(uint256(1 days)));
+        assertEq(wrapper.cooldown(), 1 days, "cooldown set");
+
+        uint256 supplyBefore = wrapper.totalSupply();
+        (uint160 spBefore,,,) = PM.getSlot0(key.toId());
+        uint256 t0 = _bal(TGBP, address(this));
+
+        uint256 received = router.swapExactInput(key, false, 1_000 * WAD, 0, address(this), block.timestamp);
+
+        assertGt(received, 0, "sell filled from LP");
+        assertEq(_bal(TGBP, address(this)) - t0, received, "router output");
+        assertEq(wrapper.totalSupply(), supplyBefore, "no redeem occurred: LP only, wrapper untouched");
+        (uint160 spAfter,,,) = PM.getSlot0(key.toId());
+        assertGt(spAfter, spBefore, "AMM ran (sell moved pool price up)");
+
+        // Buys still backstop atomically under cooldown (mint is unaffected).
+        uint256 w0 = _bal(WST, address(this));
+        uint256 bought = router.swapExactInput(key, true, 50_000 * WAD, 0, address(this), block.timestamp);
+        assertGt(bought, 0, "buy still works under cooldown");
+        assertEq(_bal(WST, address(this)) - w0, bought, "buy output");
+    }
+
+    /// @notice When the backstop is unavailable (cooldown) AND there is no LP, a sell cannot be served
+    ///         — it must REVERT, never deliver less than asked. Exercises the router's slippage floor
+    ///         (exact-in) and full-delivery enforcement (exact-out) so the swapper is never
+    ///         short-changed. Buys still backstop.
+    function test_cooldownSellWithNoLpRevertsNotShortChanged() public {
+        PoolKey memory key2 = PoolKey({
+            currency0: Currency.wrap(TGBP),
+            currency1: Currency.wrap(WST),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(hook))
+        });
+        PM.initialize(key2, TickMath.getSqrtPriceAtTick(0));
+        vm.store(ACT, COOLDOWN_SLOT, bytes32(uint256(1 days)));
+
+        vm.expectRevert(); // exact-in: fills 0 from the empty pool, below the minOut floor
+        router.swapExactInput(key2, false, 1_000 * WAD, 1, address(this), block.timestamp);
+
+        vm.expectRevert(); // exact-out: delivers 0, below the enforced full-delivery amount
+        router.swapExactOutput(key2, false, 1_000 * WAD, type(uint256).max, address(this), block.timestamp);
+
+        uint256 w0 = _bal(WST, address(this));
+        uint256 bought = router.swapExactInput(key2, true, 1_000 * WAD, 0, address(this), block.timestamp);
+        assertGt(bought, 0, "buy backstops on the no-LP pool under cooldown");
+        assertEq(_bal(WST, address(this)) - w0, bought, "buy output");
+    }
+
     function _bal(address t, address who) internal view returns (uint256) {
         return IERC20Minimal(t).balanceOf(who);
     }
