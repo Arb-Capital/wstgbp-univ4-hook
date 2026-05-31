@@ -2,5 +2,26 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 800
+via_ir = false
+ffi = true
+fs_permissions = [{ access = "read-write", path = ".forge-snapshots/" }]
+# v4 flash accounting relies on transient storage (EIP-1153 / cancun) and large gas limits.
+gas_limit = "3000000000"
+
+[profile.default.fuzz]
+runs = 256
+
+# `via_ir` is needed when the test suite pulls in heavier periphery contracts; enable with
+# `FOUNDRY_PROFILE=viair forge test` if a "stack too deep" appears.
+[profile.viair]
+via_ir = true
+optimizer_runs = 800
+
+[rpc_endpoints]
+mainnet = "${ETH_RPC_URL}"
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
