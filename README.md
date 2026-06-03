@@ -6,15 +6,17 @@ protocol's own oracle prices: **buys execute at `wstGBP.mintcost()`, sells at `w
 The ~25bps spread is the wrapper's own bid/ask (no extra hook fee), and both prices ratchet up as NAV
 accrues. The hook is **ownerless and holds no capital** — it wraps the swap's own tokens.
 
-Two variants (pick one per pool):
-
-- **`WstGBPBackstopHook`** — pure backstop, LP blocked. Every swap is `mint`/`redeem`.
-- **`WstGBPHybridHook`** — best execution: consume in-band third-party LP first (pool fee to LPs),
-  backstop the remainder. With no LP it behaves identically to the pure backstop.
+**`WstGBPBackstopHook`** — the pure backstop: LP is blocked (`beforeAddLiquidity` reverts) and every
+swap is `mint`/`redeem`. This is the single hook in scope for audit and deployment. Best execution
+against any *separate* third-party LP pool is handled at the routing layer (Uniswap routing / UniswapX
++ arbitrage, which pins a vanilla pool inside the band). A `WstGBPHybridHook` variant that consumes
+in-band LP inside the same pool was evaluated and **deferred** — it is preserved in git history (see
+[`ROADMAP.md`](ROADMAP.md)) and can be revived if in-pool LP demand materializes.
 
 Swaps must be **settle-first** — route via `src/periphery/WstGBPSwapRouter.sol` (or any settle-first
 solver/aggregator). Quotes come from `src/periphery/WstGBPQuoter.sol` or the off-chain formula. Full
-design lives in [`CLAUDE.md`](CLAUDE.md); the backlog in [`ROADMAP.md`](ROADMAP.md).
+design lives in [`CLAUDE.md`](CLAUDE.md); the backlog in [`ROADMAP.md`](ROADMAP.md). The audited surface
+and scope are in [`AUDIT_SCOPE.md`](AUDIT_SCOPE.md).
 
 ---
 
@@ -34,7 +36,7 @@ that block; the hook does not sanity-check it.
 | **Spread / fees** (`bpsin`, `bpsout`) | `act` = MaseerGate, each settable up to **100%** | Widens/narrows the bid/ask (currently ~25bps). Could make execution arbitrarily unfavorable. |
 | **Market open/close** (`mintable`/`burnable`) | `act`, timestamp-gated; `pauseMarket()` closes both | Closed mint ⇒ buys revert; closed burn ⇒ sells revert. |
 | **Capacity** (`capacity`) | `act` | Caps total wstGBP supply; shrinking it blocks buys (`ExceedsCap`). |
-| **Cooldown** (`cooldown`) | `act` | Non-zero breaks the *atomic* redeem a v4 swap requires. Handled: hybrid sells **fall back to pool liquidity only**, pure-backstop sells **revert** (`RedeemCooldownActive`). Buys are unaffected (mint is always atomic). |
+| **Cooldown** (`cooldown`) | `act` | Non-zero breaks the *atomic* redeem a v4 swap requires. Handled: sells **revert** (`RedeemCooldownActive`) rather than burn wstGBP into a deferred payout. Buys are unaffected (mint is always atomic). |
 | **Compliance / blacklist** (`cop.pass`) | `cop` = MaseerGuardOZ (`!isBanned`) | Gates every `mint`/`redeem`/`transfer`. Because the hook settles wstGBP to the PoolManager which then `take`s it to the recipient, **the hook, the PoolManager, AND the swap recipient must all stay un-banned** for buys (hook un-banned for every swap). A ban on the hook or the canonical PoolManager bricks the pool. |
 | **Wrapper upgrade** | `wstGBP` sits behind `MaseerProxy` (delegatecall), `file(impl)` swaps the implementation with **no timelock** | An implementation change can alter `mint`/`redeem` semantics arbitrarily. The hook's balance-diff and `RedeemUnderpaid` guard are only partial defense. **tGBP itself is also an upgradeable proxy.** |
 
@@ -47,11 +49,15 @@ that block; the hook does not sanity-check it.
 - **Pre-flight with the quoter.** `WstGBPQuoter.previewSwap(zeroForOne, amountSpecified)` returns
   `(amountIn, amountOut, executable, reason)` and reports the live blockers: market closed, dust
   threshold, capacity exceeded, wrapper underfunded, or redeem cooldown active.
+- **Pin the canonical `PoolKey`** (security-audit I-01). The router and quoter are intentionally generic
+  over `PoolKey`; the hook validates only the two currencies, not the fee, tick spacing, or hook address.
+  Integrators, bots, and frontends must hardcode/validate the canonical key
+  (`currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSpacing = 1`, `hooks = <deployed hook>`) and
+  must never route through a user- or route-supplied key. The deploy script logs the canonical key.
 
 ### What integrators should monitor
 
-- `wstGBP.cooldown()` — must be `0` for backstop sells; non-zero degrades sells to LP-only (hybrid) or
-  reverts (backstop).
+- `wstGBP.cooldown()` — must be `0` for sells; non-zero makes sells revert (`RedeemCooldownActive`).
 - `wstGBP.mintable()` / `wstGBP.burnable()` — market open/closed.
 - `wstGBP.capacity()` vs `wstGBP.totalSupply()` — remaining buy headroom.
 - `wstGBP.mintcost()` / `wstGBP.burncost()` — the live execution price (ratchets; governance/oracle can
@@ -86,8 +92,9 @@ forge test --match-test test_buyExactInput -vvv      # single test
 forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
 ```
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (58 tests:
-27 pure-backstop + 31 hybrid, including pricing fuzz, capacity, cooldown-fallback, and the hybrid
-sub-threshold-residual refund/revert cases). Deploy
-with env `HOOK=hybrid` (default) or `HOOK=backstop`; the hook address is CREATE2-mined for its
-permission flags and must not be on the tGBP/wstGBP ban list.
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (29 tests in
+`test/WstGBPBackstopHook.t.sol`: pricing × 4, 25bps round-trip, quoter == execution + fuzz,
+`previewSwap` flags, router hardening + Permit2, LP-add revert, market-closed / underfunded / cooldown /
+capacity reverts, cached-feed parity, and swap-first-routing rejection). `script/DeployHook.s.sol`
+CREATE2-mines the hook for its permission flags (`0x888`), initializes the pool (fee 0 / tickSpacing 1),
+and deploys the router + quoter; the hook address must not be on the tGBP/wstGBP ban list.

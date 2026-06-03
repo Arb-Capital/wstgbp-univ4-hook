@@ -5,6 +5,17 @@ See `CLAUDE.md` for the full design; this file is just status + what's left.
 
 Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
 
+## Decision (2026-06-03): ship the pure backstop, defer the hybrid
+
+Only **one** hook goes to external audit / mainnet, and it is **`WstGBPBackstopHook`** (pure backstop,
+LP blocked). Rationale: it delivers the full product (infinite depth, tight ~25bps band) with a far
+smaller audit surface, and best-execution against any *separate* third-party LP pool is handled at the
+routing layer (Uniswap routing / UniswapX + arbitrage pinning a vanilla pool into the band) rather than
+inside the hook. The `WstGBPHybridHook` (+ `WstGBPHybridQuoter` + its tests) — fully built, fixed
+(M-01/L-01), and fork-validated — was removed from the tree and **preserved in git history at commit
+`b7a5c5a`**; revive it only if in-pool LP demand materializes (it would need its own audit). Audit scope
+is in `AUDIT_SCOPE.md`. This resolves the P2 item (6) consolidation question below.
+
 ## Done
 
 - [x] **Two hook variants** (user wants to keep both / choose later), both ownerless + no capital,
@@ -98,9 +109,9 @@ edge, not a fixed band — so it self-corrects as the rate moves out of where LP
 - [x] **(5)** Deploy script + quoter for the hybrid — `WstGBPHybridQuoter` (LP-aware, exact: replays
       the AMM to the edge via `StateLibrary` + backstops the residual) is deployed alongside the hybrid
       in `script/DeployHook.s.sol`.
-- [~] **(6) Consolidation — deferred.** The hybrid subsumes the backstop (no-LP ⇒ identical), so one
-      hook is viable, BUT the user wants to keep BOTH to evaluate. So both are kept; the deploy script
-      selects via env `HOOK=hybrid|backstop`. Revisit retiring the backstop once a variant is chosen.
+- [x] **(6) Consolidation — RESOLVED (2026-06-03).** Chose the **pure backstop** (see the Decision note
+      at the top). The hybrid hook/quoter/tests were removed from the tree (preserved at `b7a5c5a`); the
+      deploy script now deploys only the backstop. Revisit the hybrid only if in-pool LP demand materializes.
 
 Design note — "inject mint/redeem at the tick edges": that IS the backstop conceptually (infinite
 liquidity at the mintcost/burncost ticks), but v4 can't post infinite liquidity as a static position
@@ -171,5 +182,7 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
         of the requested output — closing a false `executable=true` at the capacity boundary.
       - Informational items (I-01..I-05: canonical-PoolKey docs, cached-feed monitoring, `ffi=false`,
         submodule pin, exact-in dust-past-edge) deferred to a follow-up / the external audit.
-- [ ] Pin `lib/v4-core` / `lib/v4-periphery` to tagged releases in `.gitmodules` (currently
-      periphery `363226d`, core `v4.0.0`). Note: working dir is not a git repo here.
+- [~] **I-04 — pin/record dependency provenance.** No release tag yet ships the required periphery APIs,
+      so the audited commits are **documented** in `AUDIT_SCOPE.md` instead: `lib/v4-periphery` at
+      `363226d` (heads/main), nested `lib/v4-core` at `v4.0.0` (`59d3ecf5`). Re-pin to a tagged release
+      once one supports the APIs. (Repo is now under git, so a future re-pin is straightforward.)

@@ -22,6 +22,7 @@ import {WstGBPBackstopHook} from "../src/WstGBPBackstopHook.sol";
 import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
 import {WstGBPQuoter} from "../src/periphery/WstGBPQuoter.sol";
 import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
+import {IMaseerAct, IMaseerPip} from "../src/interfaces/IMaseerFeeds.sol";
 
 interface IPermit2DomainSeparator {
     function DOMAIN_SEPARATOR() external view returns (bytes32);
@@ -329,6 +330,20 @@ contract WstGBPBackstopHookForkTest is Test {
         vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + minted));
         (,, bool ok2,) = quoter.previewSwap(true, int256(amountOut));
         assertTrue(ok2, "executable once capacity covers the minted amount");
+    }
+
+    /// @notice I-02 regression: the hook caches the wrapper's immutable `act`/`pip` feed proxies at
+    ///         construction and prices swaps directly off them (skipping the wrapper dispatch hop). Assert
+    ///         the cached proxies equal the wrapper's and that the cached-feed prices equal the wrapper
+    ///         facade prices, so that optimization can never silently diverge from `wstGBP` itself.
+    function test_cachedFeedsMatchWrapper() public view {
+        assertEq(address(hook.act()), wrapper.act(), "act proxy == wrapper.act()");
+        assertEq(address(hook.pip()), wrapper.pip(), "pip proxy == wrapper.pip()");
+        IMaseerAct a = hook.act();
+        uint256 nav = hook.pip().read();
+        assertEq(a.mintcost(nav), wrapper.mintcost(), "cached mintcost == facade");
+        assertEq(a.burncost(nav), wrapper.burncost(), "cached burncost == facade");
+        assertEq(a.cooldown(), wrapper.cooldown(), "cached cooldown == facade");
     }
 
     // --- Fuzz: quoter == execution and the hook is left clean, across all four modes ---
