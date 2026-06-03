@@ -69,10 +69,13 @@ at `mintcost` (buys) / `burncost` (sells), read live each swap, exact-in and exa
 `WstGBPHybridHook` adds, before that backstop, a reentrancy-guarded **nested `poolManager.swap`**
 bounded at the fee-adjusted edge (`mintcost*(1-fee)` buys / `burncost/(1-fee)` sells) so any in-band
 LP fills through the real AMM (pool fee to LPs); it then backstops only the residual and combines
-both into one delta. With no in-range LP it fills nothing and equals the pure backstop. LP priced
-worse than the current edge is never used (the backstop is always ≥ as good) and is arbed back into
-the band. `WstGBPBackstopHook` simply blocks LP (`beforeAddLiquidity` reverts) and always backstops
-the full amount.
+both into one delta. The `fee` in that edge is the **full directional swap fee v4 charges** — the LP
+fee combined with any pool protocol fee (read from `slot0`, M-01 fix) — so the AMM never fills past
+the true backstop edge even when a protocol fee is enabled. With no in-range LP it fills nothing and
+equals the pure backstop. LP priced worse than the current edge is never used (the backstop is always
+≥ as good) and is arbed back into the band. Dynamic-fee and ≥100% fee pool keys are rejected
+(`PoolNotSupported`, L-01 fix). `WstGBPBackstopHook` simply blocks LP (`beforeAddLiquidity` reverts)
+and always backstops the full amount.
 
 ### Routing: how the input reaches the hook (this is the crux)
 
@@ -163,16 +166,17 @@ forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --privat
 
 Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canonical PoolManager; the
 hook is mined+deployed on the fork. The MaseerGate is forced open via
-`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. Two suites (58 tests):
-- `test/WstGBPBackstopHook.t.sol` (27) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
+`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. Two suites (62 tests):
+- `test/WstGBPBackstopHook.t.sol` (28) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
   round-trip, quoter == execution (4 modes + fuzz), `previewSwap` flags, router hardening (minOut /
   maxIn / deadline / recipient / surplus refund, Permit2), LP-add revert, market-closed + underfunded
-  + cooldown + capacity reverts, swap-first routing reverting.
-- `test/WstGBPHybridHook.t.sol` (31) — the hybrid with real LP: buy/sell × exact-in/out blend LP then
+  + cooldown + capacity reverts, swap-first routing reverting, **L-02** capacity-uses-minted-amount.
+- `test/WstGBPHybridHook.t.sol` (34) — the hybrid with real LP: buy/sell × exact-in/out blend LP then
   backstop and beat the pure-backstop price; no-LP ⇒ exact backstop; price-past-edge ⇒ AMM skipped +
   out-of-band LP ignored; large swap; LP earns the fee; cooldown LP-only fallback; LP-quote ==
-  execution (4 modes + fuzz); and the **sub-threshold residual** edges (exact-in dust refunded not
-  charged; exact-out residual reverts `BackstopResidualTooSmall`; quoter parity).
+  execution (4 modes + fuzz); the **sub-threshold residual** edges (exact-in dust refunded not
+  charged; exact-out residual reverts `BackstopResidualTooSmall`; quoter parity); and **M-01**
+  protocol-fee-aware edge (buy/sell) + **L-01** dynamic/≥100%-fee rejection.
 
 ## Dependencies / toolchain
 

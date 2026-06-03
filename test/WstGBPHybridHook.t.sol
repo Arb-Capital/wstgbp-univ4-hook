@@ -11,6 +11,8 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
+import {ProtocolFeeLibrary} from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
 import {CustomRevert} from "@uniswap/v4-core/src/libraries/CustomRevert.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -39,6 +41,7 @@ contract WstGBPHybridHookForkTest is Test {
     bytes32 constant CAPACITY_SLOT = keccak256("maseer.gate.capacity");
 
     uint256 constant WAD = 1e18;
+    uint256 constant PIPS = 1_000_000;
     uint24 constant FEE = 500; // 5bps to LPs
     int24 constant TS = 60;
 
@@ -481,6 +484,106 @@ contract WstGBPHybridHookForkTest is Test {
         PoolKey memory k = _freshNoLpPool();
         vm.expectRevert(abi.encodeWithSelector(WstGBPSwapRouter.InsufficientOutput.selector, 0, 1));
         router.swapExactInput(k, true, WAD / 2, 1, address(this), block.timestamp);
+    }
+
+    // --- M-01: the AMM edge must net out the v4 protocol fee, not just the LP fee ---
+
+    /// @notice M-01 regression (buy). With the max v4 protocol fee enabled, the fee-adjusted backstop
+    ///         edge must account for the FULL directional swap fee (LP + protocol). At the current NAV
+    ///         the 0.15% combined fee pushes the buy edge to the far side of the 1:1 pool price, so a
+    ///         correct edge skips the AMM entirely and prices at the pure backstop. The unfixed code
+    ///         (LP-fee-only edge) instead runs the AMM at a worse-than-backstop all-in price: it moves
+    ///         the pool and delivers strictly less than `backstopOnly`, failing both asserts below.
+    function test_protocolFeeAwareEdge_buy() public {
+        _enableMaxProtocolFee();
+        uint24 swapFee = _combinedSwapFee(true);
+        assertGt(swapFee, FEE, "protocol fee raised the combined swap fee above the LP fee");
+        // Scenario precondition: the protocol fee flips the buy edge past the pool price (mintcost is
+        // only ~13bps over par). Asserted so the test fails loudly if the live NAV ever drifts out of it.
+        assertLt(
+            FullMath.mulDiv(wrapper.mintcost(), PIPS - swapFee, PIPS), WAD, "scenario: protocol fee flips the buy edge"
+        );
+
+        (uint160 spBefore,,,) = PM.getSlot0(key.toId());
+        uint256 amtIn = 50_000 * WAD;
+        uint256 backstopOnly = amtIn * WAD / wrapper.mintcost();
+        uint256 quoted = hybridQuoter.quoteExactInput(key, true, amtIn);
+        uint256 received = router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp);
+
+        (uint160 spAfter,,,) = PM.getSlot0(key.toId());
+        assertEq(received, backstopOnly, "protocol-fee-aware edge => AMM skipped, pure backstop price");
+        assertEq(spAfter, spBefore, "AMM untouched (no overfill past the true edge)");
+        assertEq(received, quoted, "LP quote == execution with the protocol fee on");
+    }
+
+    /// @notice M-01 regression (sell), symmetric to the buy: the sell edge must net out the protocol
+    ///         fee too. At the current NAV the combined fee flips the sell edge below the pool price, so
+    ///         a correct edge skips the AMM and prices at the pure backstop; the unfixed code overfills.
+    function test_protocolFeeAwareEdge_sell() public {
+        _enableMaxProtocolFee();
+        uint24 swapFee = _combinedSwapFee(false);
+        assertGe(
+            FullMath.mulDiv(wrapper.burncost(), PIPS, PIPS - swapFee), WAD, "scenario: protocol fee flips the sell edge"
+        );
+
+        (uint160 spBefore,,,) = PM.getSlot0(key.toId());
+        uint256 amtIn = 50_000 * WAD;
+        uint256 backstopOnly = amtIn * wrapper.burncost() / WAD;
+        uint256 quoted = hybridQuoter.quoteExactInput(key, false, amtIn);
+        uint256 received = router.swapExactInput(key, false, amtIn, 0, address(this), block.timestamp);
+
+        (uint160 spAfter,,,) = PM.getSlot0(key.toId());
+        assertEq(received, backstopOnly, "protocol-fee-aware edge => AMM skipped, pure backstop price");
+        assertEq(spAfter, spBefore, "AMM untouched (no overfill past the true edge)");
+        assertEq(received, quoted, "LP quote == execution with the protocol fee on");
+    }
+
+    // --- L-01: dynamic-fee and >=100% fee keys are rejected (edge math would underflow / div-by-zero) ---
+
+    /// @notice L-01 regression: a tGBP/wstGBP pool on this hook with a dynamic (`0x800000`) or 100%
+    ///         (`1_000_000`) fee must revert `PoolNotSupported` on both swap and quote, rather than
+    ///         underflow/divide-by-zero in the edge math. The canonical static fee is unaffected.
+    function test_unsupportedFeeKeysRevert() public {
+        uint24[2] memory badFees = [uint24(0x800000), uint24(1_000_000)]; // dynamic flag, 100% static
+        for (uint256 i = 0; i < badFees.length; i++) {
+            PoolKey memory bad = PoolKey({
+                currency0: Currency.wrap(TGBP),
+                currency1: Currency.wrap(WST),
+                fee: badFees[i],
+                tickSpacing: TS,
+                hooks: IHooks(address(hook))
+            });
+            PM.initialize(bad, TickMath.getSqrtPriceAtTick(0));
+
+            _expectHookReverts(WstGBPHybridHook.PoolNotSupported.selector);
+            router.swapExactInput(bad, true, 1_000 * WAD, 0, address(this), block.timestamp);
+
+            vm.expectRevert(WstGBPHybridQuoter.PoolNotSupported.selector);
+            hybridQuoter.quoteExactInput(bad, true, 1_000 * WAD);
+            vm.expectRevert(WstGBPHybridQuoter.PoolNotSupported.selector);
+            hybridQuoter.quoteExactOutput(bad, true, 1_000 * WAD);
+            vm.expectRevert(WstGBPHybridQuoter.PoolNotSupported.selector);
+            hybridQuoter.previewSwap(bad, true, -int256(1_000 * WAD));
+        }
+
+        // Sanity: the canonical 5bps pool still quotes/executes normally.
+        assertGt(hybridQuoter.quoteExactInput(key, true, 1_000 * WAD), 0, "canonical static fee unaffected");
+    }
+
+    /// @dev Enable the v4 max protocol fee (0.1% per direction) on the canonical pool via the controller.
+    function _enableMaxProtocolFee() internal {
+        uint24 pf = (uint24(1000) << 12) | uint24(1000); // oneForZero | zeroForOne, both at MAX_PROTOCOL_FEE
+        vm.prank(PM.protocolFeeController());
+        PM.setProtocolFee(key, pf);
+    }
+
+    /// @dev The full directional swap fee v4 charges on the canonical pool — mirrors the hook/quoter.
+    function _combinedSwapFee(bool zeroForOne) internal view returns (uint24) {
+        (,, uint24 protocolFee, uint24 lpFee) = PM.getSlot0(key.toId());
+        uint16 pf = zeroForOne
+            ? ProtocolFeeLibrary.getZeroForOneFee(protocolFee)
+            : ProtocolFeeLibrary.getOneForZeroFee(protocolFee);
+        return pf == 0 ? lpFee : ProtocolFeeLibrary.calculateSwapFee(pf, lpFee);
     }
 
     /// @dev v4 wraps a reverting `beforeSwap` in `CustomRevert.WrappedError(hook, beforeSwap.selector,

@@ -9,6 +9,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -41,6 +42,8 @@ contract WstGBPBackstopHookForkTest is Test {
     bytes32 constant HALT_BURN = keccak256("maseer.gate.burn.halt");
     bytes32 constant COOLDOWN_SLOT = keccak256("maseer.gate.cooldown");
     bytes32 constant CAPACITY_SLOT = keccak256("maseer.gate.capacity");
+    bytes32 constant BPSIN_SLOT = keccak256("maseer.gate.bpsin");
+    bytes32 constant PRICE_SLOT = keccak256("maseer.price.price"); // NAV slot in the MaseerPrice (pip) proxy
 
     uint256 constant WAD = 1e18;
 
@@ -290,6 +293,42 @@ contract WstGBPBackstopHookForkTest is Test {
         _swapIn(true, 1_000 * WAD); // mints ~1000/mintcost wstGBP >> 100 headroom
 
         assertGt(_swapIn(true, 50 * WAD), 0, "buy within the capacity headroom still works");
+    }
+
+    /// @notice L-02 regression: an exact-output buy rounds the tGBP input UP, so `wrapper.mint` mints
+    ///         strictly more wstGBP than the requested `amountOut` whenever `mintcost < WAD`. The
+    ///         capacity preview must gate on that *minted* amount, not on the requested output — else it
+    ///         reports `executable = true` at a tight capacity boundary while execution reverts in mint.
+    ///         The live NAV is > par, so we drive it sub-par (pip price slot + zero ask spread) to
+    ///         materialize the overshoot deterministically.
+    function test_previewCapacityUsesMintedNotRequestedOutput() public {
+        // Sub-par NAV with no ask spread => mintcost == nav < WAD, so the rounded-up exact-out input
+        // mints more wstGBP than requested.
+        vm.store(ACT, BPSIN_SLOT, bytes32(uint256(0)));
+        vm.store(wrapper.pip(), PRICE_SLOT, bytes32(uint256(0.5e18)));
+        uint256 mc = wrapper.mintcost();
+        assertLt(mc, WAD, "forced sub-par mintcost");
+
+        uint256 amountOut = 1_000 * WAD + 1; // non-whole so the ceil-rounded input overshoots the mint
+        uint256 amountIn = quoter.quoteExactOutput(true, amountOut);
+        uint256 minted = FullMath.mulDiv(amountIn, WAD, mc); // == wrapper.mint(amountIn)
+        assertGt(minted, amountOut, "exact-out buy mints strictly more than requested");
+
+        // Capacity sits exactly at the requested-output boundary: the OLD check (vs amountOut) passes,
+        // but the real mint (vs minted) is one unit over.
+        vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + amountOut));
+        (,, bool executable, string memory reason) = quoter.previewSwap(true, int256(amountOut));
+        assertFalse(executable, "preview must gate on the minted amount, not the requested output");
+        assertEq(reason, "exceeds capacity", "reason");
+
+        // Execution indeed reverts at this capacity (wrapper ExceedsCap inside mint).
+        vm.expectRevert();
+        router.swapExactOutput(key, true, amountOut, amountIn + 10 * WAD, address(this), block.timestamp);
+
+        // Give capacity for the full minted amount and the preview flips to executable.
+        vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + minted));
+        (,, bool ok2,) = quoter.previewSwap(true, int256(amountOut));
+        assertTrue(ok2, "executable once capacity covers the minted amount");
     }
 
     // --- Fuzz: quoter == execution and the hook is left clean, across all four modes ---

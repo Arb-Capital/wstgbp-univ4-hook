@@ -52,6 +52,9 @@ contract WstGBPHybridQuoter {
     /// @dev Mirrors `WstGBPHybridHook`: an exact-output swap whose backstop residual is below the
     ///      wrapper's mint/redeem threshold reverts (it can't be filled at a fair price).
     error BackstopResidualTooSmall();
+    /// @dev Mirrors `WstGBPHybridHook`: dynamic-fee / >=100% fee keys are rejected (the edge math
+    ///      would underflow / divide by zero).
+    error PoolNotSupported();
 
     constructor(IwstGBP _wrapper, IPoolManager _poolManager) {
         wrapper = _wrapper;
@@ -121,7 +124,7 @@ contract WstGBPHybridQuoter {
         view
         returns (uint256 amountOut, uint256 backstopMintOut, uint256 backstopClaim)
     {
-        uint160 edge = _edgeSqrtPrice(zeroForOne, key.fee);
+        uint160 edge = _edgeFor(key, zeroForOne);
         (uint256 ammIn, uint256 ammOut) = _simulateAmm(key, zeroForOne, -int256(amountIn), edge);
         uint256 residualIn = amountIn - ammIn;
         uint256 backstopOut = _backstopOutForIn(zeroForOne, residualIn);
@@ -138,7 +141,7 @@ contract WstGBPHybridQuoter {
         view
         returns (uint256 amountIn, uint256 backstopMintOut, uint256 backstopClaim, bool residualTooSmall)
     {
-        uint160 edge = _edgeSqrtPrice(zeroForOne, key.fee);
+        uint160 edge = _edgeFor(key, zeroForOne);
         (uint256 ammIn, uint256 ammOut) = _simulateAmm(key, zeroForOne, int256(amountOut), edge);
         uint256 residualOut = amountOut - ammOut;
         uint256 backstopIn;
@@ -336,11 +339,23 @@ contract WstGBPHybridQuoter {
         }
     }
 
-    /// @dev The sqrtPriceX96 backstop edge — identical to `WstGBPHybridHook._edgeSqrtPrice`.
-    function _edgeSqrtPrice(bool zeroForOne, uint24 fee) internal view returns (uint160) {
+    /// @dev The backstop edge for `key`/direction, netting out the full directional swap fee v4 will
+    ///      charge (LP fee + any protocol fee) — identical to the hook. Reverts `PoolNotSupported` for
+    ///      dynamic / >=100% fee keys, mirroring `WstGBPHybridHook._beforeSwap`.
+    function _edgeFor(PoolKey calldata key, bool zeroForOne) internal view returns (uint160) {
+        if (key.fee >= PIPS) revert PoolNotSupported();
+        (,, uint24 protocolFee, uint24 lpFee) = poolManager.getSlot0(key.toId());
+        uint24 swapFee = _swapFee(protocolFee, lpFee, zeroForOne);
+        if (swapFee >= PIPS) revert PoolNotSupported();
+        return _edgeSqrtPrice(zeroForOne, swapFee);
+    }
+
+    /// @dev The sqrtPriceX96 backstop edge — identical to `WstGBPHybridHook._edgeSqrtPrice`. `swapFee`
+    ///      is the full directional swap fee (LP + protocol fee).
+    function _edgeSqrtPrice(bool zeroForOne, uint24 swapFee) internal view returns (uint160) {
         uint256 adj = zeroForOne
-            ? FullMath.mulDiv(wrapper.mintcost(), PIPS - fee, PIPS)  // mintcost*(1-fee)
-            : FullMath.mulDiv(wrapper.burncost(), PIPS, PIPS - fee); // burncost/(1-fee)
+            ? FullMath.mulDiv(wrapper.mintcost(), PIPS - swapFee, PIPS)  // mintcost*(1-fee)
+            : FullMath.mulDiv(wrapper.burncost(), PIPS, PIPS - swapFee); // burncost/(1-fee)
         uint256 sp = FixedPointMathLib.sqrt(PRICE_NUMERATOR / adj);
         if (sp <= TickMath.MIN_SQRT_PRICE) return TickMath.MIN_SQRT_PRICE + 1;
         if (sp >= TickMath.MAX_SQRT_PRICE) return TickMath.MAX_SQRT_PRICE - 1;

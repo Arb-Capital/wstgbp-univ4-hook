@@ -12,6 +12,7 @@ import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {ProtocolFeeLibrary} from "@uniswap/v4-core/src/libraries/ProtocolFeeLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
@@ -119,6 +120,11 @@ contract WstGBPHybridHook is BaseHook {
             revert PoolNotSupported();
         }
 
+        // Dynamic-fee (`key.fee == 0x800000`) and >=100% fee keys are unsupported: the edge math
+        // (`PIPS - fee`) would underflow / divide by zero. Reject them up front; normal static fees
+        // (e.g. 5bps, 30bps) all pass. The combined fee (with a v4 protocol fee) is re-checked below.
+        if (key.fee >= PIPS) revert PoolNotSupported();
+
         // A non-zero redemption cooldown makes `wstGBP.redeem` non-atomic, so the sell backstop cannot
         // settle within the swap. Fall back to pool liquidity only: step aside (zero delta) so the
         // outer AMM fills the sell against in-range LP. The swapper is protected by the router's
@@ -128,14 +134,24 @@ contract WstGBPHybridHook is BaseHook {
             return (IHooks.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0);
         }
 
+        // Read pool state once: the current price plus the fees v4 will actually charge this swap.
+        // The edge must net out the FULL directional swap fee (LP fee + any v4 protocol fee), not just
+        // `key.fee`; otherwise an enabled protocol fee would let the nested AMM fill past the true
+        // backstop edge and consume LP priced worse than the backstop. With protocolFee == 0 this is
+        // byte-identical to using `key.fee` on a static-fee pool.
+        (uint160 sqrtP,, uint24 protocolFee, uint24 lpFee) = poolManager.getSlot0(key.toId());
+        uint24 swapFee = _swapFee(protocolFee, lpFee, params.zeroForOne);
+        // A near-100% LP fee combined with the max protocol fee can sum to exactly PIPS; reject it too.
+        if (swapFee >= PIPS) revert PoolNotSupported();
+
         // The backstop price for this direction (mintcost for buys / burncost for sells), read once and
         // reused for both the AMM edge and the residual backstop. Constant within the tx, so this is
         // identical to reading it separately in each helper — it just avoids the extra oracle hops.
         uint256 cost = params.zeroForOne ? _mintcost() : _burncost();
 
         // 1) Fill in-band LP via a nested AMM swap bounded at the fee-adjusted backstop edge.
-        uint160 edge = _edgeSqrtPrice(params.zeroForOne, key.fee, cost);
-        (uint256 ammIn, uint256 ammOut) = _fillAmm(key, params.zeroForOne, params.amountSpecified, edge);
+        uint160 edge = _edgeSqrtPrice(params.zeroForOne, swapFee, cost);
+        (uint256 ammIn, uint256 ammOut) = _fillAmm(key, params.zeroForOne, params.amountSpecified, sqrtP, edge);
 
         // 2) Backstop the residual and combine. The specified leg cancels the OUTER swap entirely so
         //    the outer AMM is a no-op; the unspecified leg is the combined input/output.
@@ -162,12 +178,12 @@ contract WstGBPHybridHook is BaseHook {
 
     /// @dev Run a nested AMM swap bounded at `edge` (same `amountSpecified` sign as the outer swap:
     ///      negative = exact-input, positive = exact-output), returning the input consumed and output
-    ///      received (both positive). Skips the AMM if the price is already at/past the edge.
-    function _fillAmm(PoolKey calldata key, bool zeroForOne, int256 amountSpecified, uint160 edge)
+    ///      received (both positive). Skips the AMM if the price (`sqrtP`, read by the caller) is
+    ///      already at/past the edge.
+    function _fillAmm(PoolKey calldata key, bool zeroForOne, int256 amountSpecified, uint160 sqrtP, uint160 edge)
         internal
         returns (uint256 ammIn, uint256 ammOut)
     {
-        (uint160 sqrtP,,,) = poolManager.getSlot0(key.toId());
         bool hasRoom = zeroForOne ? sqrtP > edge : sqrtP < edge;
         if (!hasRoom) return (0, 0);
 
@@ -252,9 +268,19 @@ contract WstGBPHybridHook is BaseHook {
         }
     }
 
+    /// @dev The full directional swap fee v4 charges: the LP fee, or — when a protocol fee is enabled
+    ///      for this direction — the protocol fee combined with the LP fee (`ProtocolFeeLibrary`).
+    ///      Mirrors `WstGBPHybridQuoter._swapFee` byte-for-byte so the edge stays aligned.
+    function _swapFee(uint24 protocolFee, uint24 lpFee, bool zeroForOne) internal pure returns (uint24) {
+        uint16 pf = zeroForOne
+            ? ProtocolFeeLibrary.getZeroForOneFee(protocolFee)
+            : ProtocolFeeLibrary.getOneForZeroFee(protocolFee);
+        return pf == 0 ? lpFee : ProtocolFeeLibrary.calculateSwapFee(pf, lpFee);
+    }
+
     /// @dev The sqrtPriceX96 at which the swapper's all-in AMM price equals the backstop edge.
-    ///      Buy ceiling = mintcost*(1-fee); sell floor = burncost/(1-fee). Returns a price limit
-    ///      clamped to valid bounds.
+    ///      Buy ceiling = mintcost*(1-fee); sell floor = burncost/(1-fee). `fee` is the full
+    ///      directional swap fee (LP + protocol). Returns a price limit clamped to valid bounds.
     function _edgeSqrtPrice(bool zeroForOne, uint24 fee, uint256 cost) internal pure returns (uint160) {
         uint256 adj = zeroForOne
             ? FullMath.mulDiv(cost, PIPS - fee, PIPS)  // mintcost*(1-fee)

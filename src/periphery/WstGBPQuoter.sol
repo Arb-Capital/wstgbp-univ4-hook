@@ -76,20 +76,21 @@ contract WstGBPQuoter {
             amountOut = uint256(amountSpecified);
             amountIn = quoteExactOutput(zeroForOne, amountOut);
         }
-        (executable, reason) = _check(zeroForOne, amountIn, amountOut);
+        (executable, reason) = _check(zeroForOne, amountIn);
     }
 
     /// @dev Mirrors the revert conditions of `wstGBP.mint`/`redeem` and the hook's underfunded guard.
-    function _check(bool zeroForOne, uint256 amountIn, uint256 amountOut)
-        internal
-        view
-        returns (bool executable, string memory reason)
-    {
+    function _check(bool zeroForOne, uint256 amountIn) internal view returns (bool executable, string memory reason) {
         if (zeroForOne) {
             // BUY: mint wstGBP with `amountIn` tGBP.
+            uint256 mc = wrapper.mintcost();
             if (!wrapper.mintable()) return (false, "mint market closed");
-            if (amountIn < wrapper.mintcost()) return (false, "below mint dust threshold");
-            if (wrapper.totalSupply() + amountOut > wrapper.capacity()) return (false, "exceeds capacity");
+            if (amountIn < mc) return (false, "below mint dust threshold");
+            // `wrapper.mint(amountIn)` mints `amountIn*1e18/mintcost`, which for an exact-output buy is
+            // >= the requested `amountOut` (the input was rounded up). Check capacity against that
+            // minted amount, not `amountOut`, so the preview can't pass while `wrapper.mint` reverts.
+            uint256 minted = FullMath.mulDiv(amountIn, WAD, mc);
+            if (wrapper.totalSupply() + minted > wrapper.capacity()) return (false, "exceeds capacity");
         } else {
             // SELL: redeem `amountIn` wstGBP for tGBP.
             if (!wrapper.burnable()) return (false, "burn market closed");

@@ -155,5 +155,21 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
         concentrated in our own contract code. **Decision (user):** flipped the default profile to
         `via_ir = true` (slower compiles, always-optimized bytecode). `.gas-snapshot` baseline (58
         entries, committed-able) regenerated at `via_ir=true`.
+- [x] **Security-audit fixes (2026-05-31, `SECURITY_AUDIT.md`)** — all 62 tests green (58 prior + 4
+      new regressions across the 3 findings; each mutation-checked to fail on the pre-fix code):
+      - **M-01 (Med):** the hybrid AMM edge now nets out the **full directional swap fee** v4 charges
+        (LP fee + any pool protocol fee), not just `key.fee`. `WstGBPHybridHook._beforeSwap` reads
+        slot0's `protocolFee`/`lpFee` once, derives the combined `swapFee` (`ProtocolFeeLibrary`), and
+        feeds it to `_edgeSqrtPrice` (and threads the already-read `sqrtP` into `_fillAmm`).
+        `WstGBPHybridQuoter` mirrors it via a shared `_edgeFor`. Stops the nested AMM consuming LP
+        priced worse than the backstop when a protocol fee is enabled. No-op when `protocolFee == 0`.
+      - **L-01 (Low):** dynamic-fee (`0x800000`) and `>=100%` fee keys now revert `PoolNotSupported`
+        in the hook and quoter (`key.fee >= PIPS`, plus a combined `swapFee >= PIPS` guard) instead of
+        underflowing / dividing by zero in the edge math. Normal static fees (5bps, 30bps) unaffected.
+      - **L-02 (Low):** `WstGBPQuoter.previewSwap` capacity check now uses the **minted** amount
+        (`amountIn·1e18/mintcost`), which for an exact-output buy is `>=` the requested output, instead
+        of the requested output — closing a false `executable=true` at the capacity boundary.
+      - Informational items (I-01..I-05: canonical-PoolKey docs, cached-feed monitoring, `ffi=false`,
+        submodule pin, exact-in dust-past-edge) deferred to a follow-up / the external audit.
 - [ ] Pin `lib/v4-core` / `lib/v4-periphery` to tagged releases in `.gitmodules` (currently
       periphery `363226d`, core `v4.0.0`). Note: working dir is not a git repo here.
