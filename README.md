@@ -88,7 +88,9 @@ wstGBP, `false` is a **SELL**. Both tokens are 18 decimals; all prices are WAD (
 ```bash
 forge build
 forge fmt
-ETH_RPC_URL=<archive-or-full-rpc> forge test -vv     # fork tests; defaults to a public RPC if unset
+ETH_RPC_URL=<archive-or-full-rpc> make test          # fast suites (feature + fuzz); fork — public RPC if unset
+make test-invariant                                  # the slow stateful fork invariant suite (~10 min) only
+make test-all                                         # everything, incl. the invariant suite (a bare `forge test` also does)
 forge test --match-test test_buyExactInput -vvv      # single test
 forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
 ```
@@ -110,11 +112,18 @@ Both run via the `Makefile` and exclude the test suite, deploy script, and vendo
 `ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
 to a public RPC).
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (47 tests in
-`test/WstGBPBackstopHook.t.sol`: pricing × 4, 25bps round-trip, quoter == execution + fuzz,
-`previewSwap` flags, router hardening + Permit2, LP-add revert, market-closed / underfunded / cooldown /
-capacity reverts, cached-feed parity, swap-first-routing rejection, and a red-team pass — paused-oracle
-preview, blacklist-bricks-pool, the hook applying no slippage of its own, callback access control, and
-defensive transfer/redeem/pool-guard coverage). `script/DeployHook.s.sol`
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (62 tests across
+three suites that share `test/base/WstGBPForkBase.sol`). `test/WstGBPBackstopHook.t.sol` (47): pricing ×
+4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2, LP-add
+revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity,
+swap-first-routing rejection, and a red-team pass — paused-oracle preview, blacklist-bricks-pool, the
+hook applying no slippage of its own, callback access control, and defensive transfer/redeem/pool-guard
+coverage. `test/WstGBPBackstopHookFuzz.t.sol` (11): adversarial math fuzzed across the whole oracle price
+range — quoter == execution (all four modes), exact-out ceiling with no >1-wei over-charge, bounded
+sub-par-NAV over-mint dust, round-trips that can never profit, a donated hook balance that changes no
+price and can't be drained, clean reverts at the price/`int128`/zero-amount extremes, and Permit2
+replay rejection. `test/WstGBPBackstopHookInvariants.t.sol` (4): a stateful handler drives long random
+swap sequences and asserts no value extraction, the ownerless hook is never drained, quoter == execution
+every swap, and the pool never holds AMM liquidity. `script/DeployHook.s.sol`
 CREATE2-mines the hook for its permission flags (`0x888`), initializes the pool (fee 0 / tickSpacing 1),
 and deploys the router + quoter; the hook address must not be on the tGBP/wstGBP ban list.

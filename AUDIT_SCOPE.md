@@ -24,7 +24,10 @@ model (the wstGBP/MaseerOne governance powers a swapper inherits): [`README.md`]
 | `src/periphery/WstGBPSwapRouter.sol` | Settle-first router (exact-in/out, slippage/deadline/recipient, surplus refund, Permit2 entrypoints) |
 | `src/periphery/WstGBPQuoter.sol` | Backstop quoter + `previewSwap` executability |
 | `script/DeployHook.s.sol` | CREATE2 mine + deploy (hook + router + quoter), pool init, I-02 feed-proxy assertion |
-| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite (47 tests) |
+| `test/base/WstGBPForkBase.sol` | Shared mainnet-fork scaffolding (deploy/seed, slot constants, swap/quote/sign helpers) for the test suites |
+| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite — feature/regression/red-team (47 tests) |
+| `test/WstGBPBackstopHookFuzz.t.sol` | Adversarial math/attack-vector fuzz across the oracle price range (11 tests) |
+| `test/WstGBPBackstopHookInvariants.t.sol` | Stateful invariants: no value extraction, hook never drained, quoter==exec, no liquidity (4 tests) |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
 
 ## Out of scope
@@ -127,7 +130,9 @@ Canonical pool key: `currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSp
 
 ```bash
 forge build
-ETH_RPC_URL=<archive-or-full-rpc> forge test -vv   # 33 fork tests; defaults to a public RPC if unset
+ETH_RPC_URL=<archive-or-full-rpc> make test          # 58 fast fork tests (feature + fuzz); public RPC if unset
+make test-invariant                                  # the 4 stateful fork invariants only (~10 min)
+make test-all                                         # all 62 (a bare `forge test -vv` also runs the slow suite)
 ```
 
 Tests fork mainnet against the real wstGBP/tGBP/oracle and the canonical PoolManager; the hook is

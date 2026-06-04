@@ -149,9 +149,11 @@ canonical Permit2 instead of this router; the deadline is the permit's). The rou
 ```bash
 forge build
 forge fmt
-ETH_RPC_URL=<archive-or-full-rpc> forge test -vv          # fork tests; defaults to a public RPC if unset
+ETH_RPC_URL=<archive-or-full-rpc> make test               # fast suites (feature + fuzz); fork — public RPC if unset
+make test-invariant                                       # the slow stateful fork invariant suite (~10 min) only
+make test-all                                             # everything, including the invariant suite
 forge test --match-test test_buyExactInput -vvv           # single test
-make coverage                                             # first-party src coverage
+make coverage                                             # first-party src coverage (excludes the slow invariant suite)
 make gen-report                                           # + HTML report → docs/coverage-report/ (gitignored); needs lcov/genhtml
 make serve-report                                         # serve report at localhost:8000 (Flatpak/Snap browsers can't load file:// CSS via the doc portal)
 forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
@@ -159,13 +161,28 @@ forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --privat
 
 Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canonical PoolManager; the
 hook is mined+deployed on the fork. The MaseerGate is forced open via
-`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. One suite (47 tests):
-- `test/WstGBPBackstopHook.t.sol` — the pure-backstop hook + router + quoter: pricing × 4, 25bps
+`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. The shared fork
+scaffolding (mine/deploy/init/seed, slot constants, swap/quote/sign helpers, plus `_setNav`/`_setSpreads`
+for driving the oracle) lives in `test/base/WstGBPForkBase.sol`; all three suites inherit it. 62 tests
+across three suites:
+- `test/WstGBPBackstopHook.t.sol` (47) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
   round-trip, quoter == execution (4 modes + fuzz), `previewSwap` flags, router hardening (minOut /
   maxIn / deadline / recipient / surplus refund, Permit2), LP-add revert, market-closed + underfunded
   + cooldown + capacity reverts, swap-first routing reverting, **L-02** capacity-uses-minted-amount,
   **I-02** cached-feed-proxies-match-wrapper (`test_cachedFeedsMatchWrapper`), red-team regressions,
   and defensive coverage for pool guards, redeem/transfer failures, router auth, and preview branches.
+- `test/WstGBPBackstopHookFuzz.t.sol` (11) — adversarial math/attack-vector fuzz: quoter == execution
+  for all four modes across the **whole** oracle price range (NAV driven 0.01–100 WAD via `vm.store`),
+  exact-out input is the fair ceiling with no >1-wei over-charge, sub-par-NAV over-mint stays bounded
+  dust, buy→sell / sell→buy round-trips can never profit, a donated hook balance changes no price and
+  can't be drained, extreme-price/`int128`/zero-amount inputs revert cleanly, and Permit2 signatures
+  can't be replayed.
+- `test/WstGBPBackstopHookInvariants.t.sol` (4) — stateful suite: a `Handler` drives long random
+  sequences of the four swap modes (constant NAV) and the invariants assert no value extraction, the
+  ownerless hook is never drained / holds only bounded exact-out dust, quoter == execution on every
+  swap, and the pool never acquires AMM liquidity. Config: `[profile.default.invariant]` runs 64 /
+  depth 32 / `fail_on_revert = false` (the handler records any parity mismatch into a ghost the
+  invariant surfaces, so lenient revert handling can't mask a violation).
 
 ## Dependencies / toolchain
 

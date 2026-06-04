@@ -34,8 +34,14 @@ is in `AUDIT_SCOPE.md`. This resolves the P2 item (6) consolidation question bel
 - [x] Deploy script — `script/DeployHook.s.sol`: CREATE2-mines the backstop flags `0x888`, pool init
       fee 0 / tickSpacing 1, deploys router + quoter, and asserts the hook's cached `act`/`pip` feed
       proxies equal the wrapper's (I-02).
-- [x] Mainnet-fork tests (29): `test/WstGBPBackstopHook.t.sol` — pricing, router hardening + Permit2,
-      quoter + `previewSwap`, guards, capacity (L-02), cached-feed parity (I-02), swap-first rejection.
+- [x] Mainnet-fork tests (62 across three suites, all sharing `test/base/WstGBPForkBase.sol`):
+      `WstGBPBackstopHook.t.sol` (47) — pricing, router hardening + Permit2, quoter + `previewSwap`,
+      guards, capacity (L-02), cached-feed parity (I-02), swap-first rejection;
+      `WstGBPBackstopHookFuzz.t.sol` (11) — adversarial math fuzzed across the whole oracle price range
+      (4-mode quoter==exec, exact-out ceiling/no-overcharge, bounded sub-par over-mint dust, round-trips
+      never profit, donated-balance no-subsidy/no-drain, extreme-price/`int128`/zero clean reverts,
+      Permit2 replay rejection); `WstGBPBackstopHookInvariants.t.sol` (4) — stateful no-extraction /
+      hook-never-drained / quoter==exec / no-liquidity invariants (`[profile.default.invariant]`).
       (The hybrid's suite was removed with the hybrid; preserved at `b7a5c5a`.)
 
 ## Design invariants (do NOT regress without a deliberate decision)
