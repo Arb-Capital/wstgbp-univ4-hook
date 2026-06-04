@@ -151,17 +151,21 @@ forge build
 forge fmt
 ETH_RPC_URL=<archive-or-full-rpc> forge test -vv          # fork tests; defaults to a public RPC if unset
 forge test --match-test test_buyExactInput -vvv           # single test
+make coverage                                             # first-party src coverage
+make gen-report                                           # + HTML report → docs/coverage-report/ (gitignored); needs lcov/genhtml
+make serve-report                                         # serve report at localhost:8000 (Flatpak/Snap browsers can't load file:// CSS via the doc portal)
 forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
 ```
 
 Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canonical PoolManager; the
 hook is mined+deployed on the fork. The MaseerGate is forced open via
-`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. One suite (29 tests):
+`vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. One suite (47 tests):
 - `test/WstGBPBackstopHook.t.sol` — the pure-backstop hook + router + quoter: pricing × 4, 25bps
   round-trip, quoter == execution (4 modes + fuzz), `previewSwap` flags, router hardening (minOut /
   maxIn / deadline / recipient / surplus refund, Permit2), LP-add revert, market-closed + underfunded
   + cooldown + capacity reverts, swap-first routing reverting, **L-02** capacity-uses-minted-amount,
-  and **I-02** cached-feed-proxies-match-wrapper (`test_cachedFeedsMatchWrapper`).
+  **I-02** cached-feed-proxies-match-wrapper (`test_cachedFeedsMatchWrapper`), red-team regressions,
+  and defensive coverage for pool guards, redeem/transfer failures, router auth, and preview branches.
 
 ## Dependencies / toolchain
 

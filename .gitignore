@@ -10,5 +10,8 @@ out/
 # Docs
 docs/
 
+# Coverage
+lcov.info
+
 # Dotenv file
 .env

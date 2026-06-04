@@ -550,6 +550,160 @@ contract WstGBPBackstopHookForkTest is Test {
         );
     }
 
+    // --- Coverage: pool guard, defensive reverts, and the full preview branch matrix ---
+
+    /// @notice The hook serves only the canonical tGBP/wstGBP pool; a swap on any *other* pool that
+    ///         shares this hook reverts `PoolNotSupported` in `beforeSwap` before touching the wrapper.
+    /// @dev The "wrong" currency is a real (code-bearing) token paired with wstGBP so PoolSwapTest's
+    ///      balance snapshot doesn't revert before the swap reaches the hook. Whatever the sort order,
+    ///      currency0 is never tGBP, so the hook rejects the pool.
+    function test_swapRevertsOnUnsupportedPool() public {
+        MinimalToken other = new MinimalToken();
+        (Currency c0, Currency c1) = address(other) < WST
+            ? (Currency.wrap(address(other)), Currency.wrap(WST))
+            : (Currency.wrap(WST), Currency.wrap(address(other)));
+        PoolKey memory wrongKey =
+            PoolKey({currency0: c0, currency1: c1, fee: 0, tickSpacing: 1, hooks: IHooks(address(hook))});
+        PM.initialize(wrongKey, 79228162514264337593543950336);
+        vm.expectRevert(); // WstGBPBackstopHook.PoolNotSupported, bubbled up through the PoolManager
+        swapFirstRouter.swap(
+            wrongKey,
+            SwapParams({
+                zeroForOne: true, amountSpecified: -int256(1 * WAD), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ""
+        );
+    }
+
+    /// @notice The hook constructor enforces currency0 (tGBP) < currency1 (wstGBP); a wrapper whose
+    ///         `gem()` sorts above its own address trips `BadCurrencyOrdering`.
+    function test_constructorRejectsBadCurrencyOrdering() public {
+        BadOrderWrapper bad = new BadOrderWrapper();
+        uint160 flags =
+            uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
+        bytes memory args = abi.encode(PM, IwstGBP(address(bad)));
+        (, bytes32 salt) = HookMiner.find(address(this), flags, type(WstGBPBackstopHook).creationCode, args);
+        vm.expectRevert(WstGBPBackstopHook.BadCurrencyOrdering.selector);
+        new WstGBPBackstopHook{salt: salt}(PM, IwstGBP(address(bad)));
+    }
+
+    /// @notice Defensive guard: if the wrapper's redeem ever pays out less than the funded claim (e.g. a
+    ///         mid-call cooldown change), the hook reverts `RedeemUnderpaid` for both sell directions
+    ///         rather than settle the seller short. Forced here by mocking redeem to a no-op (it returns
+    ///         an id but moves no tGBP) while the wrapper stays funded, so the balance diff measures 0.
+    function test_sellRevertsWhenRedeemUnderpays() public {
+        vm.mockCall(WST, abi.encodeWithSelector(IwstGBP.redeem.selector), abi.encode(uint256(1)));
+        vm.expectRevert(); // RedeemUnderpaid (exact-in), bubbled up through the PoolManager
+        _swapIn(false, 1_000 * WAD);
+        vm.expectRevert(); // RedeemUnderpaid (exact-out)
+        _swapOut(false, 1_000 * WAD, 2_000 * WAD);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Defensive guard: if settling the output token to the PoolManager fails, the hook reverts
+    ///         `TransferFailed`. Forced by mocking the wstGBP `transfer` (the buy's settle leg) to return
+    ///         false; `wrapper.mint` is unaffected (it mints via internal accounting, not `transfer`).
+    function test_settleRevertsWhenTokenTransferFails() public {
+        vm.mockCall(WST, abi.encodeWithSelector(IERC20Minimal.transfer.selector), abi.encode(false));
+        vm.expectRevert(); // WstGBPBackstopHook.TransferFailed, bubbled up through the PoolManager
+        _swapIn(true, 1_000 * WAD);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Defensive guard: non-standard ERC20s that return malformed transfer data are rejected.
+    function test_settleRevertsWhenTokenTransferReturnsMalformedData() public {
+        vm.mockCall(WST, abi.encodeWithSelector(IERC20Minimal.transfer.selector), abi.encode(bytes32(0), bytes32(0)));
+        vm.expectRevert(); // WstGBPBackstopHook.TransferFailed, bubbled up through the PoolManager
+        _swapIn(true, 1_000 * WAD);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice The hook's low-level transfer helper accepts ERC20s that return no data.
+    function test_safeTransferAllowsNoReturnTokens() public {
+        uint160 flags =
+            uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
+        bytes memory args = abi.encode(PM, wrapper);
+        (, bytes32 salt) = HookMiner.find(address(this), flags, type(SafeTransferHarness).creationCode, args);
+        SafeTransferHarness harness = new SafeTransferHarness{salt: salt}(PM, wrapper);
+        NoReturnToken token = new NoReturnToken();
+        address bob = address(0xB0B2);
+
+        token.mint(address(harness), 123);
+        harness.exposedSafeTransfer(address(token), bob, 123);
+
+        assertEq(token.balanceOf(address(harness)), 0, "harness spent token");
+        assertEq(token.balanceOf(bob), 123, "bob received token");
+    }
+
+    /// @notice `unlockCallback` is callable only by the PoolManager.
+    function test_routerUnlockCallbackRejectsNonPoolManager() public {
+        vm.expectRevert(WstGBPSwapRouter.NotPoolManager.selector);
+        router.unlockCallback("");
+    }
+
+    /// @notice A Permit2 swap whose permit token != the swap's input currency reverts `Permit2TokenMismatch`
+    ///         (checked before the transfer, so the signature is irrelevant here).
+    function test_permit2RejectsTokenMismatch() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtIn = 1_000 * WAD;
+        // Buy => input currency is tGBP; sign a permit over wstGBP instead.
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermit(pk, WST, amtIn, 0, block.timestamp + 1 hours);
+        vm.prank(alice);
+        vm.expectRevert(WstGBPSwapRouter.Permit2TokenMismatch.selector);
+        router.swapExactInputPermit2(key, true, amtIn, 0, alice, permit, sig);
+    }
+
+    /// @notice An approval-based swap from a payer who never approved the router reverts `TransferFailed`
+    ///         (the input `transferFrom` fails).
+    function test_routerRevertsWhenTransferFromFails() public {
+        address carol = address(0xCA401); // funded but has NOT approved the router
+        deal(TGBP, carol, 1_000 * WAD);
+        vm.prank(carol);
+        vm.expectRevert(WstGBPSwapRouter.TransferFailed.selector);
+        router.swapExactInput(key, true, 1_000 * WAD, 0, carol, block.timestamp);
+    }
+
+    // --- previewSwap: the remaining `_check` branches (buy dust + every sell gate) ---
+
+    function test_previewBuyBelowDustThreshold() public view {
+        // amountIn below mintcost (~> 1 WAD) => wrapper.mint would revert on its dust floor.
+        (,, bool ok, string memory r) = quoter.previewSwap(true, -int256(1));
+        assertFalse(ok);
+        assertEq(r, "below mint dust threshold");
+    }
+
+    function test_previewSellMarketClosed() public {
+        vm.store(ACT, OPEN_BURN, bytes32(type(uint256).max)); // burnable() => false
+        (,, bool ok, string memory r) = quoter.previewSwap(false, -int256(1_000 * WAD));
+        assertFalse(ok);
+        assertEq(r, "burn market closed");
+    }
+
+    function test_previewSellBelowRedeemMinimum() public view {
+        // < 1 wstGBP can't be redeemed (wrapper minimum is 1e18).
+        (,, bool ok, string memory r) = quoter.previewSwap(false, -int256(0.5e18));
+        assertFalse(ok);
+        assertEq(r, "below redeem minimum");
+    }
+
+    function test_previewSellExecutableWhenHealthy() public view {
+        (uint256 aIn, uint256 aOut, bool ok, string memory r) = quoter.previewSwap(false, -int256(1_000 * WAD));
+        assertTrue(ok);
+        assertEq(bytes(r).length, 0);
+        assertEq(aIn, 1_000 * WAD, "exact-in amountIn");
+        assertEq(aOut, quoter.quoteExactInput(false, 1_000 * WAD), "amountOut == quote");
+    }
+
+    function test_previewSellUnderfunded() public {
+        deal(TGBP, WST, 1 * WAD); // drain the wrapper's tGBP below the claim
+        (,, bool ok, string memory r) = quoter.previewSwap(false, -int256(1_000 * WAD));
+        assertFalse(ok);
+        assertEq(r, "wrapper underfunded");
+    }
+
     // --- helpers ---
 
     function _assertOraclePaused(bool zeroForOne, int256 amountSpecified) internal view {
@@ -609,5 +763,63 @@ contract WstGBPBackstopHookForkTest is Test {
         vm.store(ACT, HALT_BURN, bytes32(type(uint256).max));
         vm.store(ACT, COOLDOWN_SLOT, bytes32(uint256(0)));
         vm.store(ACT, CAPACITY_SLOT, bytes32(type(uint256).max));
+    }
+}
+
+/// @dev Minimal wrapper stub whose underlying `gem()` (tGBP) address sorts ABOVE its own (wstGBP)
+///      address, used solely to exercise the hook constructor's `BadCurrencyOrdering` guard. The
+///      constructor reads `gem()/act()/pip()` then reverts on the ordering check before anything else.
+contract BadOrderWrapper {
+    function gem() external pure returns (address) {
+        return address(type(uint160).max);
+    }
+
+    function act() external pure returns (address) {
+        return address(0xAC7);
+    }
+
+    function pip() external pure returns (address) {
+        return address(0xB1B);
+    }
+}
+
+/// @dev Minimal code-bearing ERC20 stand-in (balanceOf returns 0; transfers are no-ops) used as a
+///      non-canonical pool currency so PoolSwapTest's balance snapshot survives long enough for the
+///      hook's `PoolNotSupported` guard to fire.
+contract MinimalToken {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function transfer(address, uint256) external pure returns (bool) {
+        return true;
+    }
+
+    function transferFrom(address, address, uint256) external pure returns (bool) {
+        return true;
+    }
+
+    function approve(address, uint256) external pure returns (bool) {
+        return true;
+    }
+}
+
+contract SafeTransferHarness is WstGBPBackstopHook {
+    constructor(IPoolManager pm, IwstGBP w) WstGBPBackstopHook(pm, w) {}
+
+    function exposedSafeTransfer(address token, address to, uint256 amount) external {
+        _safeTransfer(token, to, amount);
+    }
+}
+
+contract NoReturnToken {
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
     }
 }

@@ -93,10 +93,28 @@ forge test --match-test test_buyExactInput -vvv      # single test
 forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
 ```
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (33 tests in
+### Coverage (requires `lcov` / `genhtml`)
+
+```bash
+make coverage      # first-party src coverage summary to the terminal
+make gen-report    # + HTML report into docs/coverage-report/ (gitignored)
+make serve-report  # serve that report at http://localhost:8000
+```
+
+View the report via `make serve-report` rather than opening `index.html` directly: a
+Flatpak/Snap browser opens local files through the xdg document portal, which shares only
+the single file with the sandbox and so drops the report's CSS/images.
+
+Both run via the `Makefile` and exclude the test suite, deploy script, and vendored
+`src/base/BaseHook.sol` so the report reflects only the first-party surface. Set
+`ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
+to a public RPC).
+
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (47 tests in
 `test/WstGBPBackstopHook.t.sol`: pricing × 4, 25bps round-trip, quoter == execution + fuzz,
 `previewSwap` flags, router hardening + Permit2, LP-add revert, market-closed / underfunded / cooldown /
 capacity reverts, cached-feed parity, swap-first-routing rejection, and a red-team pass — paused-oracle
-preview, blacklist-bricks-pool, the hook applying no slippage of its own, and callback access control). `script/DeployHook.s.sol`
+preview, blacklist-bricks-pool, the hook applying no slippage of its own, callback access control, and
+defensive transfer/redeem/pool-guard coverage). `script/DeployHook.s.sol`
 CREATE2-mines the hook for its permission flags (`0x888`), initializes the pool (fee 0 / tickSpacing 1),
 and deploys the router + quoter; the hook address must not be on the tGBP/wstGBP ban list.

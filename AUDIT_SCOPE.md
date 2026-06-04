@@ -24,7 +24,7 @@ model (the wstGBP/MaseerOne governance powers a swapper inherits): [`README.md`]
 | `src/periphery/WstGBPSwapRouter.sol` | Settle-first router (exact-in/out, slippage/deadline/recipient, surplus refund, Permit2 entrypoints) |
 | `src/periphery/WstGBPQuoter.sol` | Backstop quoter + `previewSwap` executability |
 | `script/DeployHook.s.sol` | CREATE2 mine + deploy (hook + router + quoter), pool init, I-02 feed-proxy assertion |
-| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite (33 tests) |
+| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite (47 tests) |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
 
 ## Out of scope
