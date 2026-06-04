@@ -112,8 +112,8 @@ Both run via the `Makefile` and exclude the test suite, deploy script, and vendo
 `ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
 to a public RPC).
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (62 tests across
-three suites that share `test/base/WstGBPForkBase.sol`). `test/WstGBPBackstopHook.t.sol` (47): pricing ×
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (63 tests across
+three suites that share `test/base/WstGBPForkBase.sol`). `test/WstGBPBackstopHook.t.sol` (48): pricing ×
 4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2, LP-add
 revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity,
 swap-first-routing rejection, and a red-team pass — paused-oracle preview, blacklist-bricks-pool, the

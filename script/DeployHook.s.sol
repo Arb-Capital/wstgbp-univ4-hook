@@ -60,6 +60,11 @@ contract DeployHook is Script {
 
         router = new WstGBPSwapRouter(pm);
         quoter = new WstGBPQuoter(wrapper);
+        // The quoter caches the same `act`/`pip` feed proxies as the hook; assert at deploy time that they
+        // match the wrapper's, so the quoter prices off the same feeds `wstGBP` reads (and the same ones
+        // the hook executes against).
+        require(address(quoter.act()) == wrapper.act(), "DeployHook: quoter act feed mismatch");
+        require(address(quoter.pip()) == wrapper.pip(), "DeployHook: quoter pip feed mismatch");
         vm.stopBroadcast();
 
         console2.log("WstGBPBackstopHook:", address(hook));

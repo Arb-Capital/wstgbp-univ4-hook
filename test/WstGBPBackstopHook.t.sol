@@ -279,6 +279,20 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         assertEq(a.cooldown(), wrapper.cooldown(), "cached cooldown == facade");
     }
 
+    /// @notice The quoter caches the wrapper's `act`/`pip` feed proxies (same optimization as the hook)
+    ///         and prices off them directly. Assert the cached proxies equal the wrapper's and that the
+    ///         cached-feed prices equal the wrapper facade, so the quoter's quotes match `wstGBP` for the
+    ///         wrapper implementation under test.
+    function test_quoterCachedFeedsMatchWrapper() public view {
+        assertEq(address(quoter.act()), wrapper.act(), "act proxy == wrapper.act()");
+        assertEq(address(quoter.pip()), wrapper.pip(), "pip proxy == wrapper.pip()");
+        IMaseerAct a = quoter.act();
+        uint256 nav = quoter.pip().read();
+        assertEq(a.mintcost(nav), wrapper.mintcost(), "cached mintcost == facade");
+        assertEq(a.burncost(nav), wrapper.burncost(), "cached burncost == facade");
+        assertEq(a.cooldown(), wrapper.cooldown(), "cached cooldown == facade");
+    }
+
     // --- Fuzz: quoter == execution and the hook is left clean, across all four modes ---
 
     function testFuzz_buyExactInputMatchesQuoter(uint256 amtIn) public {

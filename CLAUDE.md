@@ -163,14 +163,15 @@ Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canon
 hook is mined+deployed on the fork. The MaseerGate is forced open via
 `vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. The shared fork
 scaffolding (mine/deploy/init/seed, slot constants, swap/quote/sign helpers, plus `_setNav`/`_setSpreads`
-for driving the oracle) lives in `test/base/WstGBPForkBase.sol`; all three suites inherit it. 62 tests
+for driving the oracle) lives in `test/base/WstGBPForkBase.sol`; all three suites inherit it. 63 tests
 across three suites:
-- `test/WstGBPBackstopHook.t.sol` (47) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
+- `test/WstGBPBackstopHook.t.sol` (48) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
   round-trip, quoter == execution (4 modes + fuzz), `previewSwap` flags, router hardening (minOut /
   maxIn / deadline / recipient / surplus refund, Permit2), LP-add revert, market-closed + underfunded
   + cooldown + capacity reverts, swap-first routing reverting, **L-02** capacity-uses-minted-amount,
-  **I-02** cached-feed-proxies-match-wrapper (`test_cachedFeedsMatchWrapper`), red-team regressions,
-  and defensive coverage for pool guards, redeem/transfer failures, router auth, and preview branches.
+  **I-02** cached-feed-proxies-match-wrapper for both the hook (`test_cachedFeedsMatchWrapper`) and the
+  quoter (`test_quoterCachedFeedsMatchWrapper`), red-team regressions, and defensive coverage for pool
+  guards, redeem/transfer failures, router auth, and preview branches.
 - `test/WstGBPBackstopHookFuzz.t.sol` (11) — adversarial math/attack-vector fuzz: quoter == execution
   for all four modes across the **whole** oracle price range (NAV driven 0.01–100 WAD via `vm.store`),
   exact-out input is the fair ceiling with no >1-wei over-charge, sub-par-NAV over-mint stays bounded
