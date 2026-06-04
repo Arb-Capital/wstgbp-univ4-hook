@@ -69,6 +69,11 @@ contract WstGBPQuoter {
         view
         returns (uint256 amountIn, uint256 amountOut, bool executable, string memory reason)
     {
+        // A paused oracle reads as a zero NAV (`MaseerPrice.pause()` pokes 0), so `mintcost()`/`burncost()`
+        // are 0 and the quote arithmetic below would divide by zero. Report it as non-executable like every
+        // other gate instead of reverting, so off-chain callers always get a clean (executable, reason).
+        if ((zeroForOne ? wrapper.mintcost() : wrapper.burncost()) == 0) return (0, 0, false, "oracle paused");
+
         if (amountSpecified < 0) {
             amountIn = uint256(-amountSpecified);
             amountOut = quoteExactInput(zeroForOne, amountIn);
@@ -79,7 +84,9 @@ contract WstGBPQuoter {
         (executable, reason) = _check(zeroForOne, amountIn);
     }
 
-    /// @dev Mirrors the revert conditions of `wstGBP.mint`/`redeem` and the hook's underfunded guard.
+    /// @dev Mirrors the revert conditions of `wstGBP.mint`/`redeem` and the hook's underfunded guard. The
+    ///      paused-oracle case (zero price) is handled by `previewSwap` before this runs, so the price is
+    ///      non-zero here.
     function _check(bool zeroForOne, uint256 amountIn) internal view returns (bool executable, string memory reason) {
         if (zeroForOne) {
             // BUY: mint wstGBP with `amountIn` tGBP.

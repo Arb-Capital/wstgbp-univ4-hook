@@ -25,10 +25,10 @@ and scope are in [`AUDIT_SCOPE.md`](AUDIT_SCOPE.md).
 **The hook adds no trust of its own — and removes none.** It has no owner, no admin, no pause, no
 independent oracle, and no price bounds. It is a pure pass-through to the **wstGBP wrapper (MaseerOne)
 and its governance**. Anyone swapping through this pool inherits, in full, the trust assumptions of the
-Maseer system. The execution price *is* whatever the wrapper's oracle and fee governance say it is at
-that block; the hook does not sanity-check it.
+wstGBP wrapper system. The execution price *is* whatever the wrapper's oracle and fee governance say it is
+at that block; the hook does not sanity-check it.
 
-### Powers that Maseer governance / the oracle hold over every swap
+### Powers that wstGBP governance / the oracle hold over every swap
 
 | Lever | Where | Effect on swaps |
 |---|---|---|
@@ -48,7 +48,8 @@ that block; the hook does not sanity-check it.
   delivering less than you agreed to. Never send `minAmountOut = 0`.
 - **Pre-flight with the quoter.** `WstGBPQuoter.previewSwap(zeroForOne, amountSpecified)` returns
   `(amountIn, amountOut, executable, reason)` and reports the live blockers: market closed, dust
-  threshold, capacity exceeded, wrapper underfunded, or redeem cooldown active.
+  threshold, capacity exceeded, wrapper underfunded, redeem cooldown active, or oracle paused — rather
+  than reverting.
 - **Pin the canonical `PoolKey`** (security-audit I-01). The router and quoter are intentionally generic
   over `PoolKey`; the hook validates only the two currencies, not the fee, tick spacing, or hook address.
   Integrators, bots, and frontends must hardcode/validate the canonical key
@@ -92,9 +93,10 @@ forge test --match-test test_buyExactInput -vvv      # single test
 forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
 ```
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (29 tests in
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (33 tests in
 `test/WstGBPBackstopHook.t.sol`: pricing × 4, 25bps round-trip, quoter == execution + fuzz,
 `previewSwap` flags, router hardening + Permit2, LP-add revert, market-closed / underfunded / cooldown /
-capacity reverts, cached-feed parity, and swap-first-routing rejection). `script/DeployHook.s.sol`
+capacity reverts, cached-feed parity, swap-first-routing rejection, and a red-team pass — paused-oracle
+preview, blacklist-bricks-pool, the hook applying no slippage of its own, and callback access control). `script/DeployHook.s.sol`
 CREATE2-mines the hook for its permission flags (`0x888`), initializes the pool (fee 0 / tickSpacing 1),
 and deploys the router + quoter; the hook address must not be on the tGBP/wstGBP ban list.

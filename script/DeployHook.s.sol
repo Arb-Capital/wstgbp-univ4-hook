@@ -35,9 +35,8 @@ contract DeployHook is Script {
 
         // Backstop permissions: beforeSwap + beforeSwapReturnDelta (custom curve) + beforeAddLiquidity
         // (reverts to block LP) ⇒ flags 0x888. Pool fee 0 / tickSpacing 1 (no AMM, so no LP fee).
-        uint160 flags = uint160(
-            Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-        );
+        uint160 flags =
+            uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
         (address predicted, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, flags, type(WstGBPBackstopHook).creationCode, abi.encode(pm, wrapper));
 

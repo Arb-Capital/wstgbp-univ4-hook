@@ -28,6 +28,14 @@ import {BeforeSwapDelta, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/Bef
 ///
 ///      Pool convention (enforced in the constructor): currency0 = tGBP, currency1 = wstGBP, so
 ///      `zeroForOne == true` is a BUY of wstGBP and `false` is a SELL. Ownerless, holds no capital.
+///
+/// @dev SLIPPAGE IS THE CALLER'S RESPONSIBILITY. `beforeSwap` executes at the wrapper's live oracle price
+///      (`mintcost`/`burncost`) with NO intrinsic slippage check, price floor, or sanity bound — it is a
+///      pure price-taker. wstGBP governance can move that price/spread between blocks (fees settable up to
+///      100%), so an unbounded swap (e.g. `minAmountOut == 0`, or a custom settle-first integration with no
+///      bounds) executes at whatever the oracle says, however unfavorable. Always swap through
+///      `WstGBPSwapRouter` (or a solver) that enforces `minAmountOut`/`maxAmountIn`. See the README trust
+///      model.
 contract WstGBPBackstopHook is BaseHook {
     using SafeCast for uint256;
 
@@ -98,6 +106,8 @@ contract WstGBPBackstopHook is BaseHook {
         revert LiquidityNotAllowed();
     }
 
+    /// @dev Executes the swap at the wrapper's live `mintcost`/`burncost`. Applies NO slippage or price
+    ///      bound of its own (see the contract-level note) — callers must enforce their own via the router.
     function _beforeSwap(address, PoolKey calldata key, SwapParams calldata params, bytes calldata)
         internal
         override

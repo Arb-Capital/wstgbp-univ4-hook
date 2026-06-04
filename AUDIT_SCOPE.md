@@ -24,7 +24,7 @@ model (the wstGBP/MaseerOne governance powers a swapper inherits): [`README.md`]
 | `src/periphery/WstGBPSwapRouter.sol` | Settle-first router (exact-in/out, slippage/deadline/recipient, surplus refund, Permit2 entrypoints) |
 | `src/periphery/WstGBPQuoter.sol` | Backstop quoter + `previewSwap` executability |
 | `script/DeployHook.s.sol` | CREATE2 mine + deploy (hook + router + quoter), pool init, I-02 feed-proxy assertion |
-| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite (29 tests) |
+| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite (33 tests) |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
 
 ## Out of scope
@@ -66,6 +66,37 @@ relevant to the in-scope backstop:
 | I-04 | Info | Dependencies | **Documented** — see provenance below (no release tag yet ships the required periphery APIs) |
 | M-01, L-01, I-05 | Med/Low/Info | Hybrid only | N/A — hybrid is out of scope (fixes preserved at `b7a5c5a`) |
 
+## Red-team review (2026-06-03)
+
+A second, adversarial pass over the in-scope backstop surface. **No critical or high code-level issues.**
+What it verified to be safe (so an external audit can move fast): the hook's `BeforeSwapDelta` accounting
+nets to zero in all four buy/sell × exact-in/out branches; every rounding step favors the protocol (the
+swapper is never over-credited; sub-wei dust accrues to the hook); the Permit2 *and* approval router paths
+hard-bind `payer == msg.sender`, so a third party cannot drive a victim's signed transfer (`payer` is never
+caller-supplied); `unlockCallback` is only reachable via the router's own `unlock`; the redeem path is
+robust to wrapper misbehavior (balance-diff + `RedeemUnderpaid`); and reentrancy is contained by the v4
+lock plus the `onlyPoolManager` guard and the hook's statelessness.
+
+The dominant residual risks are **trust/centralization in the wstGBP wrapper** and the **design property
+that the hook applies no slippage of its own** — both inherent and documented in detail in the
+[`README.md`](README.md) trust model (oracle pause/move, fees to 100%, blacklist kill-switch on the hook or
+PoolManager, sell-side funding dependence, wrapper/tGBP proxy upgrades). No code change can remove them;
+mitigation is the caller's slippage bounds (canonical router) plus operational monitoring of the ban list,
+market gates, and proxy implementations.
+
+Changes from this pass (no swap-execution behavior changed):
+- **Quoter:** `previewSwap` now reports `(executable=false, "oracle paused")` when the oracle NAV is 0,
+  instead of reverting on a divide-by-zero in the quote math (`WstGBPQuoter`).
+- **Hook NatSpec:** an explicit "slippage is the caller's responsibility" warning on the contract and
+  `_beforeSwap` (recorded *decision*: keep the hook a pure price-taker; slippage belongs at the routing
+  layer).
+- **Tests (+4 ⇒ 33):** paused-oracle preview; blacklist-bricks-pool (hook/PoolManager banned via the `cop`
+  gate); hook-applies-no-slippage (bounded swap reverts, unbounded executes at the moved price);
+  hook callbacks reject non-PoolManager callers (the reentrancy barrier). A hostile-token reentrancy
+  *harness* was considered and judged disproportionate — the real tGBP/wstGBP cannot exercise a transfer
+  callback, and the protections (onlyPoolManager + zero-net accounting) are covered by the callback-guard
+  test and the existing "hook stays clean" assertions.
+
 ## Dependency provenance (I-04)
 
 The audited commits (no top-level lockfile beyond submodule pins):
@@ -96,7 +127,7 @@ Canonical pool key: `currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSp
 
 ```bash
 forge build
-ETH_RPC_URL=<archive-or-full-rpc> forge test -vv   # 29 fork tests; defaults to a public RPC if unset
+ETH_RPC_URL=<archive-or-full-rpc> forge test -vv   # 33 fork tests; defaults to a public RPC if unset
 ```
 
 Tests fork mainnet against the real wstGBP/tGBP/oracle and the canonical PoolManager; the hook is
@@ -104,4 +135,5 @@ CREATE2-mined and deployed on the fork, and the MaseerGate is forced open via `v
 determinism. Coverage: pricing × 4, 25bps round-trip, quoter == execution (4 modes + fuzz),
 `previewSwap` flags, router hardening (minOut / maxIn / deadline / recipient / surplus refund, Permit2),
 LP-add revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity (I-02),
-capacity-uses-minted-amount (L-02), and swap-first-routing rejection.
+capacity-uses-minted-amount (L-02), swap-first-routing rejection, and the red-team additions (paused-oracle
+preview, blacklist-bricks-pool, no-hook-slippage, callback access control).

@@ -19,6 +19,7 @@ import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
 import {WstGBPBackstopHook} from "../src/WstGBPBackstopHook.sol";
+import {BaseHook} from "../src/base/BaseHook.sol";
 import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
 import {WstGBPQuoter} from "../src/periphery/WstGBPQuoter.sol";
 import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
@@ -26,6 +27,11 @@ import {IMaseerAct, IMaseerPip} from "../src/interfaces/IMaseerFeeds.sol";
 
 interface IPermit2DomainSeparator {
     function DOMAIN_SEPARATOR() external view returns (bytes32);
+}
+
+/// @dev MaseerOne exposes its immutable compliance feed via a public `cop()` getter (not in IwstGBP).
+interface IHasCop {
+    function cop() external view returns (address);
 }
 
 /// @notice Mainnet-fork tests for the pure-backstop hook (no LP) + the settle-first router & quoter.
@@ -456,7 +462,104 @@ contract WstGBPBackstopHookForkTest is Test {
         router.swapExactOutput(key, false, 0.5e18, 100 * WAD, address(this), block.timestamp); // sell, wIn < 1 wstGBP
     }
 
+    // --- Red-team pass (2026-06-03) ---
+
+    /// @notice L-02 (red-team): a paused oracle reads as a zero NAV, so `mintcost()`/`burncost()` are 0 and
+    ///         the quote arithmetic would divide by zero. `previewSwap` must degrade gracefully —
+    ///         `(executable=false, "oracle paused")` for all four modes — instead of reverting.
+    function test_previewSwapHandlesPausedOracle() public {
+        vm.store(wrapper.pip(), PRICE_SLOT, bytes32(uint256(0)));
+        assertEq(wrapper.mintcost(), 0, "paused mintcost == 0");
+        assertEq(wrapper.burncost(), 0, "paused burncost == 0");
+
+        _assertOraclePaused(true, -int256(1_000 * WAD)); // buy exact-in
+        _assertOraclePaused(true, int256(1_000 * WAD)); // buy exact-out
+        _assertOraclePaused(false, -int256(1_000 * WAD)); // sell exact-in
+        _assertOraclePaused(false, int256(1_000 * WAD)); // sell exact-out
+    }
+
+    /// @notice M-01 (red-team): the wstGBP compliance gate (`cop.pass`, a permissive blacklist) is applied
+    ///         to every mint/redeem/transfer. Banning the *hook* makes `wrapper.mint`/`redeem` revert, so
+    ///         every swap reverts with no owner/recovery path — a third-party kill-switch over the whole
+    ///         pool. Banning the *PoolManager* also bricks buys: the hook settles wstGBP to the PM, and
+    ///         `wstGBP.transfer` gates the destination through `cop.pass`.
+    function test_blacklistBricksPool() public {
+        address cop = IHasCop(WST).cop();
+        assertGt(_swapIn(true, 100 * WAD), 0, "buy works before any ban");
+
+        // Ban the hook => both directions revert (mint and redeem both gate on cop.pass(msg.sender=hook)).
+        vm.mockCall(cop, abi.encodeWithSignature("pass(address)", address(hook)), abi.encode(false));
+        vm.expectRevert();
+        _swapIn(true, 1_000 * WAD);
+        vm.expectRevert();
+        _swapIn(false, 1_000 * WAD);
+        vm.clearMockedCalls();
+
+        // Ban the PoolManager => buys revert at the settle transfer (wstGBP.transfer to a banned dst).
+        vm.mockCall(cop, abi.encodeWithSignature("pass(address)", address(PM)), abi.encode(false));
+        vm.expectRevert();
+        _swapIn(true, 1_000 * WAD);
+    }
+
+    /// @notice M-02 (red-team): the hook executes at the live oracle price with NO intrinsic slippage or
+    ///         price-sanity check — protection lives entirely in the caller. Prove both halves: a router
+    ///         swap with a real `minAmountOut` reverts when the price moves adverse, while the same swap
+    ///         with `minAmountOut == 0` executes at the worse price and the buyer simply eats it.
+    function test_hookAppliesNoSlippageCallerMustBound() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 fairOut = quoter.quoteExactInput(true, amtIn);
+
+        // Move NAV up ~10% (adverse to a buyer: higher mintcost => less wstGBP out).
+        uint256 nav0 = wrapper.navprice();
+        vm.store(wrapper.pip(), PRICE_SLOT, bytes32(nav0 * 110 / 100));
+        uint256 worseOut = quoter.quoteExactInput(true, amtIn);
+        assertLt(worseOut, fairOut, "price moved adverse to the buyer");
+
+        // Caller-enforced slippage DOES protect: demanding the pre-move output reverts at the router.
+        vm.expectRevert(abi.encodeWithSelector(WstGBPSwapRouter.InsufficientOutput.selector, worseOut, fairOut));
+        router.swapExactInput(key, true, amtIn, fairOut, address(this), block.timestamp);
+
+        // The hook itself applies NONE: `minAmountOut == 0` executes at the worse live price.
+        uint256 got = router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp);
+        assertEq(got, worseOut, "executes at the live (worse) price; no hook-level guard");
+        _assertHookClean();
+    }
+
+    /// @notice I-04 (red-team): the hook's callbacks are gated by `onlyPoolManager`, so nothing — including
+    ///         a hostile token mid-mint/redeem — can re-enter `beforeSwap`/`beforeAddLiquidity` directly;
+    ///         only the PoolManager can drive them. (A hostile-token reentrancy harness was judged
+    ///         disproportionate: the real tGBP/wstGBP have no transfer callback, and the actual protections
+    ///         are this access-control guard plus the zero-net delta accounting the other tests assert.)
+    function test_hookCallbacksRejectNonPoolManager() public {
+        vm.expectRevert(BaseHook.NotPoolManager.selector);
+        hook.beforeSwap(
+            address(this),
+            key,
+            SwapParams({
+                zeroForOne: true, amountSpecified: -int256(1 * WAD), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            ""
+        );
+
+        vm.expectRevert(BaseHook.NotPoolManager.selector);
+        hook.beforeAddLiquidity(
+            address(this),
+            key,
+            ModifyLiquidityParams({tickLower: -1, tickUpper: 1, liquidityDelta: int256(1), salt: 0}),
+            ""
+        );
+    }
+
     // --- helpers ---
+
+    function _assertOraclePaused(bool zeroForOne, int256 amountSpecified) internal view {
+        (uint256 amountIn, uint256 amountOut, bool executable, string memory reason) =
+            quoter.previewSwap(zeroForOne, amountSpecified);
+        assertFalse(executable, "paused oracle => not executable");
+        assertEq(reason, "oracle paused", "paused reason");
+        assertEq(amountIn, 0, "paused amountIn == 0");
+        assertEq(amountOut, 0, "paused amountOut == 0");
+    }
 
     function _signPermit(uint256 pk, address token, uint256 amount, uint256 nonce, uint256 deadline)
         internal
