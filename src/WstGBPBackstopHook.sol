@@ -20,8 +20,6 @@ import {BeforeSwapDelta, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/Bef
 /// @notice A Uniswap v4 hook that gives a tGBP/wstGBP pool effectively unlimited depth by routing
 ///         every swap through the wstGBP wrapper's atomic mint/redeem at the protocol's own prices:
 ///         buys execute at `wstGBP.mintcost()`, sells at `wstGBP.burncost()`. LP adds are blocked.
-///         (For a pool that should ALSO consume third-party in-band LP first, use `WstGBPHybridHook`
-///         — with no LP it behaves identically to this hook.)
 ///
 /// @dev `beforeSwap` returns a `BeforeSwapDelta` whose specified leg exactly cancels the swap so the
 ///      AMM is bypassed entirely. The hook `take`s the swap's input currency from the PoolManager,

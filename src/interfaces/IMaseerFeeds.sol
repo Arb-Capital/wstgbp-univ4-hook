@@ -2,8 +2,8 @@
 pragma solidity ^0.8.26;
 
 /// @title IMaseerFeeds
-/// @notice Minimal interfaces for the wstGBP wrapper's two price feeds, used by the hooks to read the
-///         backstop price directly and skip the wrapper's dispatch hop.
+/// @notice Minimal interfaces for the wstGBP wrapper's two price feeds, used by the backstop hook to
+///         read the backstop price directly and skip the wrapper's dispatch hop.
 /// @dev `wstGBP` (MaseerOne) computes its quotes by forwarding to two immutable sub-contracts:
 ///        mintcost() == act.mintcost(pip.read())
 ///        burncost() == act.burncost(pip.read())
@@ -13,8 +13,6 @@ pragma solidity ^0.8.26;
 ///      directly — the result is byte-identical to `wstGBP.mintcost()`/`burncost()`/`cooldown()` because
 ///      `mint`/`redeem` read the exact same feeds. This trades a slightly tighter coupling to the
 ///      wrapper's internals for one fewer external call per price read.
-///
-///      Reference: ../maseer-one/src/MaseerOne.sol (Pip/Act interfaces), MaseerGate.sol, MaseerPrice.sol.
 interface IMaseerPip {
     /// @notice The raw oracle NAV price in WAD tGBP-per-wstGBP (un-fee-adjusted).
     function read() external view returns (uint256);

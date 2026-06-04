@@ -7,8 +7,6 @@ pragma solidity ^0.8.26;
 ///      0x57C3571f10767E49C9d7b60feb6c67804783B7aE on Ethereum mainnet. The underlying ("gem")
 ///      is tGBP (0x27f6c8289550fCE67f6B50BeD1F519966aFE5287). Both tokens use 18 decimals and all
 ///      prices below are WAD (1e18) quotes of tGBP-per-wstGBP.
-///
-///      Reference implementation: ../maseer-one/src/MaseerOne.sol
 interface IwstGBP {
     /// @notice Mint wstGBP by depositing tGBP.
     /// @dev Pulls `amt` tGBP from msg.sender (requires prior tGBP approval to this contract) and

@@ -45,9 +45,8 @@ contract DeployHook is Script {
         hook = new WstGBPBackstopHook{salt: salt}(pm, wrapper);
         require(address(hook) == predicted, "DeployHook: mined address mismatch");
 
-        // I-02 guard: the hook caches the wrapper's immutable `act`/`pip` feed proxies and prices swaps
-        // directly off them. Assert they equal the wrapper's so the cached-feed optimization can never
-        // diverge from the wrapper facade at deploy time.
+        // The hook caches the wrapper's immutable `act`/`pip` feed proxies and prices swaps directly off
+        // them; assert they match the wrapper's so the cached reads can never diverge from it.
         require(address(hook.act()) == wrapper.act(), "DeployHook: act feed mismatch");
         require(address(hook.pip()) == wrapper.pip(), "DeployHook: pip feed mismatch");
 

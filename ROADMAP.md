@@ -18,27 +18,25 @@ is in `AUDIT_SCOPE.md`. This resolves the P2 item (6) consolidation question bel
 
 ## Done
 
-- [x] **Two hook variants** (user wants to keep both / choose later), both ownerless + no capital,
-      exact-in/out both directions, sharing the router + quoter:
-      - `src/WstGBPBackstopHook.sol` (flags `0x888`) — pure backstop, LP blocked.
-      - `src/WstGBPHybridHook.sol` (flags `0x88`) — best execution: in-band LP first (real AMM, fee
-        to LPs), backstop the rest; with no LP it equals the pure backstop.
+- [x] **Hook (shipped): `src/WstGBPBackstopHook.sol`** (flags `0x888`) — pure backstop, LP blocked,
+      ownerless + no capital, exact-in/out both directions, sharing the router + quoter.
+      - A `WstGBPHybridHook` (flags `0x88`, best-ex: in-band LP first then backstop) was also built but is
+        now **deferred and removed from the tree** (see the Decision note above; preserved at `b7a5c5a`).
 - [x] Vendored `src/base/BaseHook.sol` (this periphery pin dropped `BaseHook`).
 - [x] `src/interfaces/IwstGBP.sol`.
 - [x] Settle-first periphery router — `src/periphery/WstGBPSwapRouter.sol` (exact-in/out,
       minOut/maxIn/deadline/recipient, surplus refund).
 - [x] Quoter — `src/periphery/WstGBPQuoter.sol`: backstop quotes + `previewSwap` executability.
       Off-chain formula in `CLAUDE.md`.
-- [x] **LP-aware quoter** — `src/periphery/WstGBPHybridQuoter.sol`: replays v4's `Pool.swap` over live
-      pool state (`StateLibrary`) to the backstop edge + prices the residual at the oracle ⇒ the
-      *exact* hybrid blend. Validated `quote == execution` for all four modes + 512 fuzz swaps. Includes
-      `previewSwap` (executability flags applied only to the backstop residual: market/capacity/funding/
-      cooldown).
-- [x] Deploy script — `script/DeployHook.s.sol` (mines flags `0x88`, CREATE2, pool init fee 5bps /
-      tickSpacing 60, deploys router + quoter).
-- [x] Mainnet-fork tests (58): `test/WstGBPBackstopHook.t.sol` (27 — pricing, router hardening,
-      quoter, guards) + `test/WstGBPHybridHook.t.sol` (31 — LP blend, no-LP parity, guards,
-      sub-threshold-residual refund/revert).
+- [x] **LP-aware quoter (deferred with the hybrid)** — `src/periphery/WstGBPHybridQuoter.sol` replayed
+      v4's `Pool.swap` to the backstop edge + priced the residual at the oracle (exact hybrid blend,
+      fuzz-validated). Removed from the tree with the hybrid; preserved at `b7a5c5a`.
+- [x] Deploy script — `script/DeployHook.s.sol`: CREATE2-mines the backstop flags `0x888`, pool init
+      fee 0 / tickSpacing 1, deploys router + quoter, and asserts the hook's cached `act`/`pip` feed
+      proxies equal the wrapper's (I-02).
+- [x] Mainnet-fork tests (29): `test/WstGBPBackstopHook.t.sol` — pricing, router hardening + Permit2,
+      quoter + `previewSwap`, guards, capacity (L-02), cached-feed parity (I-02), swap-first rejection.
+      (The hybrid's suite was removed with the hybrid; preserved at `b7a5c5a`.)
 
 ## Design invariants (do NOT regress without a deliberate decision)
 

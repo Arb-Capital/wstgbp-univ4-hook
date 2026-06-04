@@ -2,6 +2,16 @@
 
 Date: 2026-05-31
 
+> **Status update (2026-06-03):** the project was subsequently **scoped to the pure backstop only**
+> (`WstGBPBackstopHook`). The `WstGBPHybridHook` (+ `WstGBPHybridQuoter` + hybrid tests) was removed from
+> the tree and preserved in git history at commit `b7a5c5a`. Consequently the **hybrid-only findings
+> M-01, L-01, and I-05 are out of scope** for the current audit; **L-02** (backstop) is fixed; and the
+> shared informational items have been addressed — **I-01** documented (README canonical-`PoolKey`),
+> **I-02** hardened (deploy assertion + `test_cachedFeedsMatchWrapper`), **I-03** fixed (`ffi=false`),
+> **I-04** documented (`AUDIT_SCOPE.md`). Current fork suite: **29 backstop tests**. The authoritative
+> current scope is **[`AUDIT_SCOPE.md`](AUDIT_SCOPE.md)**; the body below is the original 2026-05-31
+> review, retained verbatim as the review record (its test counts and statuses are point-in-time).
+
 Scope: first-party code in `src/`, `script/`, tests, deployment configuration, and the integration
 boundary with Uniswap v4, Permit2, and the Maseer wstGBP wrapper. Vendored `lib/` code was treated as
 trusted upstream, but relevant boundary behavior was reviewed.
