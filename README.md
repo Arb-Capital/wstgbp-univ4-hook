@@ -93,7 +93,8 @@ ETH_RPC_URL=<archive-or-full-rpc> make test          # fast suites (feature + fu
 make test-invariant                                  # the slow stateful fork invariant suite (~10 min) only
 make test-all                                         # everything, incl. the invariant suite (a bare `forge test` also does)
 forge test --match-test test_buyExactInput -vvv      # single test
-forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
+make deploy-dry                                      # simulate the deploy on a mainnet fork (no broadcast, no key)
+ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy   # broadcast + --slow + Etherscan verify
 ```
 
 ### Coverage (requires `lcov` / `genhtml`)

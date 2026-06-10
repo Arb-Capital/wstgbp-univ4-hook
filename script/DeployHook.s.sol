@@ -17,7 +17,9 @@ import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
 /// @notice Mines + CREATE2-deploys the `WstGBPBackstopHook`, initializes the tGBP/wstGBP pool (fee 0,
 ///         tickSpacing 1, LP blocked), and deploys the settle-first router and quoter integrators use.
 ///
-/// Usage: forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
+/// Usage: ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy
+///        (forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --private-key $PK
+///         --broadcast --slow --verify --etherscan-api-key $ETHERSCAN_API_KEY)
 contract DeployHook is Script {
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;

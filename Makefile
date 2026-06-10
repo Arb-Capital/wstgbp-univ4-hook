@@ -9,7 +9,7 @@ COVERAGE_EXCLUDE := (test/|script/|src/base/)
 # `make test` / `make coverage` paths and run explicitly via `make test-invariant` / `make test-all`.
 INVARIANT_PATH := test/WstGBPBackstopHookInvariants.t.sol
 
-.PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report
+.PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry
 
 build :; forge build
 
@@ -23,6 +23,23 @@ test-invariant :; forge test -vvv --match-path "$(INVARIANT_PATH)"
 test-all :; forge test -vvv
 
 fmt   :; forge fmt
+
+# Simulate the full deploy against live mainnet state — no broadcast, no key, nothing sent. Exercises
+# the mine + mined-address assert + I-02 feed-parity asserts + pool init end-to-end and writes the
+# planned txs to broadcast/DeployHook.s.sol/1/dry-run/. Falls back to a public RPC if ETH_RPC_URL is
+# unset (same as the test suite).
+deploy-dry :; forge script script/DeployHook.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+# Mainnet deploy: mines + CREATE2-deploys the hook (asserts address + I-02 feed parity), initializes
+# the pool, deploys the router + quoter, and verifies all three on Etherscan. `--slow` waits for each
+# tx to confirm before sending the next (the CREATE2 deploy must land before the pool init references
+# it). Requires: ETH_RPC_URL, PK (deployer key), ETHERSCAN_API_KEY. Run `make deploy-dry` first.
+deploy :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(PK)" || { echo "PK (deployer private key) is required"; exit 1; }
+	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required for --verify"; exit 1; }
+	forge script script/DeployHook.s.sol --rpc-url $(ETH_RPC_URL) --private-key $(PK) \
+		--broadcast --slow --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
 
 clean :; forge clean
 

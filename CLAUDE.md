@@ -157,7 +157,8 @@ forge test --match-test test_buyExactInput -vvv           # single test
 make coverage                                             # first-party src coverage (excludes the slow invariant suite)
 make gen-report                                           # + HTML report → docs/coverage-report/ (gitignored); needs lcov/genhtml
 make serve-report                                         # serve report at localhost:8000 (Flatpak/Snap browsers can't load file:// CSS via the doc portal)
-forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --broadcast --private-key $PK
+make deploy-dry                                           # simulate the deploy on a mainnet fork (no broadcast, no key)
+ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy   # broadcast + --slow + Etherscan verify
 ```
 
 Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canonical PoolManager; the
