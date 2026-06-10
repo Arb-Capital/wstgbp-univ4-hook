@@ -38,7 +38,7 @@ at that block; the hook does not sanity-check it.
 | **Capacity** (`capacity`) | `act` | Caps total wstGBP supply; shrinking it blocks buys (`ExceedsCap`). |
 | **Cooldown** (`cooldown`) | `act` | Non-zero breaks the *atomic* redeem a v4 swap requires. Handled: sells **revert** (`RedeemCooldownActive`) rather than burn wstGBP into a deferred payout. Buys are unaffected (mint is always atomic). |
 | **Compliance / blacklist** (`cop.pass`) | `cop` = MaseerGuardOZ (`!isBanned`) | Gates every `mint`/`redeem`/`transfer`. Because the hook settles wstGBP to the PoolManager which then `take`s it to the recipient, **the hook, the PoolManager, AND the swap recipient must all stay un-banned** for buys (hook un-banned for every swap). A ban on the hook or the canonical PoolManager bricks the pool. |
-| **Wrapper upgrade** | `wstGBP` sits behind `MaseerProxy` (delegatecall), `file(impl)` swaps the implementation with **no timelock** | An implementation change can alter `mint`/`redeem` semantics arbitrarily. The hook's balance-diff and `RedeemUnderpaid` guard are only partial defense. **tGBP itself is also an upgradeable proxy.** |
+| **Proxy upgrades** | `pip`, `act`, and `cop` are `MaseerProxy` instances (`file(impl)` swaps the implementation, **no timelock**); **tGBP is an EIP-1967 proxy**. `wstGBP` (MaseerOne) itself is **not** a proxy — its code and immutable wiring (`gem`/`pip`/`act`/`cop`) are fixed forever | All *pricing, gating, compliance, and underlying-token* behavior can change arbitrarily via the feed/guard/tGBP implementations, but the wrapper's `mint`/`redeem` mechanics cannot. Because the hook and quoter cache the same fixed `act`/`pip` addresses the wrapper reads, they stay price-identical to the wrapper even across feed upgrades. The hook's balance-diff and `RedeemUnderpaid` guard are only partial defense against hostile feed/tGBP implementations. |
 
 ### What protects the swapper
 
@@ -64,7 +64,8 @@ at that block; the hook does not sanity-check it.
 - `wstGBP.mintcost()` / `wstGBP.burncost()` — the live execution price (ratchets; governance/oracle can
   move it).
 - `tGBP.balanceOf(wstGBP)` — sell-side funding depth (sells revert `WrapperUnderfunded` past it).
-- The **proxy implementation** of `wstGBP` (and `tGBP`) — watch for upgrades.
+- The **proxy implementations** of `pip`/`act`/`cop` (MaseerProxy) and `tGBP` (EIP-1967) — watch for
+  upgrades. `wstGBP` itself is not upgradeable.
 - The **ban list** (`cop` / its guard source) — keep the hook, the PoolManager, and your recipients
   off it.
 

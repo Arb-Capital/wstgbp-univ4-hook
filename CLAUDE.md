@@ -103,8 +103,9 @@ after the AMM, or the whole swap when there's no LP) settles per case:
 | Sell exact-in | wstGBP `in` | `redeem(in)` → `recv` | tGBP `recv` | `(+in, -recv)` |
 | Sell exact-out | wstGBP `ceil(out·1e18/burncost)` | `redeem(in)` (≥out; dust kept) | tGBP `out` | `(-out, +in)` |
 
-- Exact-output rounds the input **up** (`FullMath.mulDivRoundingUp`); the wrapper over-delivers by at
-  most ~1 wei, which stays in the hook as harmless dust (no recovery function — economically nil).
+- Exact-output rounds the input **up** (`FullMath.mulDivRoundingUp`); the wrapper over-delivers by
+  price-bounded dust (≤ 1 wei at NAV ≥ 1; up to `1e18/mintcost` wei at sub-par NAV), which stays in
+  the hook as harmless dust (no recovery function — economically nil).
 - Sells pre-check `tGBP.balanceOf(wstGBP) >= claim` and revert `WrapperUnderfunded` rather than
   burn wstGBP into an underfunded redeem (redeem burns first, then pays).
 - Settlement order to pay PM: `sync(currency) → transfer → settle()`. `take` needs no sync. The hook
@@ -212,8 +213,11 @@ Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. D
 settle-first router with slippage/deadline/recipient + exact-output full-delivery, the backstop quoter +
 `previewSwap`, Permit2 router entrypoints, router `Swap` events, deploy wiring (with the I-02 feed-proxy
 assertion), a security-review + audit-fix pass (L-02 capacity; I-02 cached-feed regression test; I-03
-`ffi=false`; M-01/L-01 fixed in the now-deferred hybrid), and test hardening (capacity, pricing fuzz,
-cached-feed parity). The hybrid was evaluated and **deferred** (preserved at `b7a5c5a`). Open headlines:
+`ffi=false`; M-01/L-01 fixed in the now-deferred hybrid), test hardening (capacity, pricing fuzz,
+cached-feed parity), and a pre-deployment security review (2026-06-09,
+`docs/SECURITY_REVIEW_2026-06-09.md` — **ship verdict**, no code findings, doc-only corrections; notably
+wstGBP itself is NOT a proxy — only its `pip`/`act`/`cop` feeds and tGBP are). The hybrid was evaluated
+and **deferred** (preserved at `b7a5c5a`). Open headlines:
 
 - **Audit:** the backstop surface is in **[`AUDIT_SCOPE.md`](AUDIT_SCOPE.md)**. An external audit is the
   real gate before mainnet.

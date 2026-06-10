@@ -25,7 +25,7 @@ model (the wstGBP/MaseerOne governance powers a swapper inherits): [`README.md`]
 | `src/periphery/WstGBPQuoter.sol` | Backstop quoter + `previewSwap` executability |
 | `script/DeployHook.s.sol` | CREATE2 mine + deploy (hook + router + quoter), pool init, I-02 feed-proxy assertion |
 | `test/base/WstGBPForkBase.sol` | Shared mainnet-fork scaffolding (deploy/seed, slot constants, swap/quote/sign helpers) for the test suites |
-| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite — feature/regression/red-team (47 tests) |
+| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite — feature/regression/red-team (48 tests) |
 | `test/WstGBPBackstopHookFuzz.t.sol` | Adversarial math/attack-vector fuzz across the oracle price range (11 tests) |
 | `test/WstGBPBackstopHookInvariants.t.sol` | Stateful invariants: no value extraction, hook never drained, quoter==exec, no liquidity (4 tests) |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
@@ -49,16 +49,21 @@ model (the wstGBP/MaseerOne governance powers a swapper inherits): [`README.md`]
 - **Ownerless, no capital, no extra fee.** No admin/pause/sweep; only transient sub-unit dust mid-swap.
 - **Currency convention** (constructor-enforced): currency0 = tGBP, currency1 = wstGBP, so
   `zeroForOne == true` is a BUY, `false` a SELL. Both 18 decimals; prices WAD.
-- **Exact-output rounds input up** (`mulDivRoundingUp`); the wrapper over-delivers ≤ ~1 wei, kept as
-  harmless dust (no recovery path — economically nil).
+- **Exact-output rounds input up** (`mulDivRoundingUp`); the wrapper over-delivers by price-bounded dust
+  kept in the hook (≤ 1 wei at NAV ≥ 1; bounded by `WAD/mintcost` wei at sub-par NAV —
+  `testFuzz_subParNavMintsAtLeastRequested`). Harmless: never credited to anyone, no recovery path —
+  economically nil.
 - **Sells pre-check wrapper funding** (`WrapperUnderfunded`) and assert full payout (`RedeemUnderpaid`),
   because `wstGBP.redeem` returns an id (not an amount) and can underpay; non-zero `cooldown()` makes the
   redeem non-atomic, so sells revert (`RedeemCooldownActive`).
 
 ## Prior security review
 
-A first-party review (`SECURITY_AUDIT.md`, 2026-05-31) found no critical/high issues. Status of findings
-relevant to the in-scope backstop:
+A first-party review (`SECURITY_AUDIT.md`, 2026-05-31 — removed from the tree with the hybrid deferral;
+in git history at `7ad0b89`) found no critical/high issues. A later pre-deployment review
+(2026-06-09, [`docs/SECURITY_REVIEW_2026-06-09.md`](docs/SECURITY_REVIEW_2026-06-09.md)) re-verified the
+full surface with a ship verdict and doc-only findings. Status of findings relevant to the in-scope
+backstop:
 
 | ID | Sev | Applies to | Status |
 |---|---|---|---|
@@ -83,7 +88,8 @@ lock plus the `onlyPoolManager` guard and the hook's statelessness.
 The dominant residual risks are **trust/centralization in the wstGBP wrapper** and the **design property
 that the hook applies no slippage of its own** — both inherent and documented in detail in the
 [`README.md`](README.md) trust model (oracle pause/move, fees to 100%, blacklist kill-switch on the hook or
-PoolManager, sell-side funding dependence, wrapper/tGBP proxy upgrades). No code change can remove them;
+PoolManager, sell-side funding dependence, feed/compliance/tGBP proxy upgrades — the wrapper itself is not
+upgradeable, but its `pip`/`act`/`cop` feeds and tGBP are proxies). No code change can remove them;
 mitigation is the caller's slippage bounds (canonical router) plus operational monitoring of the ban list,
 market gates, and proxy implementations.
 
@@ -130,9 +136,9 @@ Canonical pool key: `currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSp
 
 ```bash
 forge build
-ETH_RPC_URL=<archive-or-full-rpc> make test          # 58 fast fork tests (feature + fuzz); public RPC if unset
+ETH_RPC_URL=<archive-or-full-rpc> make test          # 59 fast fork tests (feature + fuzz); public RPC if unset
 make test-invariant                                  # the 4 stateful fork invariants only (~10 min)
-make test-all                                         # all 62 (a bare `forge test -vv` also runs the slow suite)
+make test-all                                         # all 63 (a bare `forge test -vv` also runs the slow suite)
 ```
 
 Tests fork mainnet against the real wstGBP/tGBP/oracle and the canonical PoolManager; the hook is

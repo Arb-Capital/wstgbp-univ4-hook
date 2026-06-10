@@ -34,8 +34,8 @@ is in `AUDIT_SCOPE.md`. This resolves the P2 item (6) consolidation question bel
 - [x] Deploy script — `script/DeployHook.s.sol`: CREATE2-mines the backstop flags `0x888`, pool init
       fee 0 / tickSpacing 1, deploys router + quoter, and asserts the hook's cached `act`/`pip` feed
       proxies equal the wrapper's (I-02).
-- [x] Mainnet-fork tests (62 across three suites, all sharing `test/base/WstGBPForkBase.sol`):
-      `WstGBPBackstopHook.t.sol` (47) — pricing, router hardening + Permit2, quoter + `previewSwap`,
+- [x] Mainnet-fork tests (63 across three suites, all sharing `test/base/WstGBPForkBase.sol`):
+      `WstGBPBackstopHook.t.sol` (48) — pricing, router hardening + Permit2, quoter + `previewSwap`,
       guards, capacity (L-02), cached-feed parity (I-02), swap-first rejection;
       `WstGBPBackstopHookFuzz.t.sol` (11) — adversarial math fuzzed across the whole oracle price range
       (4-mode quoter==exec, exact-out ceiling/no-overcharge, bounded sub-par over-mint dust, round-trips
@@ -43,6 +43,14 @@ is in `AUDIT_SCOPE.md`. This resolves the P2 item (6) consolidation question bel
       Permit2 replay rejection); `WstGBPBackstopHookInvariants.t.sol` (4) — stateful no-extraction /
       hook-never-drained / quoter==exec / no-liquidity invariants (`[profile.default.invariant]`).
       (The hybrid's suite was removed with the hybrid; preserved at `b7a5c5a`.)
+- [x] **Pre-deployment security review (2026-06-09, `docs/SECURITY_REVIEW_2026-06-09.md`)** — **ship
+      verdict**, no code findings (nothing ≥ Medium; no Solidity changes). Hand-verified all four
+      `BeforeSwapDelta` branches, router delta/refund/Permit2 logic, quoter parity, vendored-BaseHook
+      drift (none), and the wrapper boundary against `../maseer-one` source + live mainnet state.
+      63/63 tests green, 100% coverage (lines/statements/branches/funcs), deploy script fork-dry-run
+      clean (mined hook `0x2f51…c888`, flags `0x888`). Doc corrections applied: wstGBP itself is **not**
+      a proxy (its `pip`/`act`/`cop` feeds and tGBP are — README trust model), stale test counts, and
+      the price-scaled exact-out dust bound.
 
 ## Design invariants (do NOT regress without a deliberate decision)
 
@@ -170,7 +178,8 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
         concentrated in our own contract code. **Decision (user):** flipped the default profile to
         `via_ir = true` (slower compiles, always-optimized bytecode). `.gas-snapshot` baseline (58
         entries, committed-able) regenerated at `via_ir=true`.
-- [x] **Security-audit fixes (2026-05-31, `SECURITY_AUDIT.md`)** — all 62 tests green (58 prior + 4
+- [x] **Security-audit fixes (2026-05-31, `SECURITY_AUDIT.md` — since removed from the tree; in git
+      history at `7ad0b89`)** — all 62 tests green at the time (58 prior + 4
       new regressions across the 3 findings; each mutation-checked to fail on the pre-fix code):
       - **M-01 (Med):** the hybrid AMM edge now nets out the **full directional swap fee** v4 charges
         (LP fee + any pool protocol fee), not just `key.fee`. `WstGBPHybridHook._beforeSwap` reads
