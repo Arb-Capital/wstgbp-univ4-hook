@@ -16,17 +16,49 @@ inside the hook. The `WstGBPHybridHook` (+ `WstGBPHybridQuoter` + its tests) —
 `b7a5c5a`**; revive it only if in-pool LP demand materializes (it would need its own audit). Audit scope
 is in `AUDIT_SCOPE.md`. This resolves the P2 item (6) consolidation question below.
 
+## Decision (2026-06-12): monorepo + one generic adapter for non-v4 venues
+
+To expose the same wstGBP `mint`/`redeem` to **CoW Protocol + DEX aggregators (Odos / LI.FI / Paraswap)**,
+keep everything in **this repo** (monorepo) restructured around a shared core, and ship **one generic
+adapter** rather than a bespoke contract per venue. Layout: `src/core/` (shared `WstGBPWrap` lib +
+interfaces), `src/v4/` (the hook + router + quoter, moved), `src/adapter/` (`WstGBPDirectAdapter`).
+
+Key finding: **"CoW Hooks" are user-attached pre/post *interactions* on an order, not a liquidity source.**
+Giving solvers a route through `mint`/`redeem` is [route integration](https://docs.cow.fi/cow-protocol/tutorials/solvers/routes_integration)
+(expose a standard swap contract + price discovery, propose on the CoW DAO forum). CoW, Odos, LI.FI, and
+Paraswap all want the *same* `approve → swap` contract, so the on-chain artifact is one generic adapter;
+v4 was the special case (settle-first + mined flags). Per-aggregator effort is **off-chain listing**.
+
+- [x] **`src/core/WstGBPWrap.sol`** — shared library (price, exact-in/out rounding, redeem balance-diff,
+      ERC20 transfer), embedded `internal`. Hook + quoter + adapter all source their math here; cross-venue
+      parity tests pin adapter == quoter == hook so they can never drift.
+- [x] **`src/adapter/WstGBPDirectAdapter.sol`** — ownerless, inventory-free, no pool. exact-in/out +
+      Permit2 + view quotes; direction from `tokenIn`; same funding/cooldown/redeem-underpaid guards as the
+      hook. Standard swap-then-settle — works with stock aggregator executors and CoW solver interactions.
+- [x] Restructure into `src/core` + `src/v4` + `src/adapter` (behavior-preserving; 59 v4 tests unchanged).
+      Fork base split into `MaseerForkBase` (agnostic) + `WstGBPForkBase` (v4) + `WstGBPAdapterForkBase`.
+- [x] Adapter test suites: `WstGBPDirectAdapter.t.sol` (20 — feature/parity/hardening + aggregator-style
+      approve+swap + Permit2 + every wrapper-gated revert), `...Fuzz.t.sol` (6 — full-NAV-range parity,
+      exact-out ceiling, round-trip-never-profits), `...Invariants.t.sol` (3 — no extraction, bounded dust,
+      quoter==exec). Now **92 tests** total (85 fast + 7 invariant).
+- [x] Deploy wiring: `DeployHook.s.sol` also deploys the adapter, asserts its I-02 cached-feed parity, and
+      checks it is not ban-listed. `deploy-dry` validated end-to-end on a mainnet fork.
+- [ ] **Off-chain listing (per venue, no Solidity):** CoW DAO forum route-integration proposal (documented
+      swap+quote interface + price discovery — the adapter view or an API); Paraswap `paraswap-dex-lib`
+      adapter PR; Odos / LI.FI partnership registration. All reuse the *same* deployed adapter.
+- [ ] **Repo rename** off `-univ4-hook` (e.g. `wstGBP-venues`) — name only, do when convenient.
+
 ## Done
 
-- [x] **Hook (shipped): `src/WstGBPBackstopHook.sol`** (flags `0x888`) — pure backstop, LP blocked,
+- [x] **Hook (shipped): `src/v4/WstGBPBackstopHook.sol`** (flags `0x888`) — pure backstop, LP blocked,
       ownerless + no capital, exact-in/out both directions, sharing the router + quoter.
       - A `WstGBPHybridHook` (flags `0x88`, best-ex: in-band LP first then backstop) was also built but is
         now **deferred and removed from the tree** (see the Decision note above; preserved at `b7a5c5a`).
-- [x] Vendored `src/base/BaseHook.sol` (this periphery pin dropped `BaseHook`).
-- [x] `src/interfaces/IwstGBP.sol`.
-- [x] Settle-first periphery router — `src/periphery/WstGBPSwapRouter.sol` (exact-in/out,
+- [x] Vendored `src/v4/base/BaseHook.sol` (this periphery pin dropped `BaseHook`).
+- [x] `src/core/interfaces/IwstGBP.sol`.
+- [x] Settle-first periphery router — `src/v4/periphery/WstGBPSwapRouter.sol` (exact-in/out,
       minOut/maxIn/deadline/recipient, surplus refund).
-- [x] Quoter — `src/periphery/WstGBPQuoter.sol`: backstop quotes + `previewSwap` executability.
+- [x] Quoter — `src/v4/periphery/WstGBPQuoter.sol`: backstop quotes + `previewSwap` executability.
       Off-chain formula in `CLAUDE.md`.
 - [x] **LP-aware quoter (deferred with the hybrid)** — `src/periphery/WstGBPHybridQuoter.sol` replayed
       v4's `Pool.swap` to the backstop edge + priced the residual at the oracle (exact hybrid blend,
@@ -165,7 +197,7 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
         `wrapper.mintcost()`/`burncost()`/`cooldown()`, skipping the MaseerOne dispatch hop. `act`/`pip`
         are `immutable` in MaseerOne, fetched once in each constructor and cached as immutables ⇒
         byte-identical to the wrapper facade (`mint`/`redeem` use the same feeds). New
-        `src/interfaces/IMaseerFeeds.sol`; `IwstGBP` gained `act()`/`pip()` getters; quoters left on the
+        `src/core/interfaces/IMaseerFeeds.sol`; `IwstGBP` gained `act()`/`pip()` getters; quoters left on the
         facade (off-chain; same value ⇒ parity preserved).
       - Backstop sell-exact-out deduped (was reading `burncost()` twice); hybrid reads the direction's
         cost **once per swap** and threads it into `_edgeSqrtPrice`/`_backstopExactIn`/`_backstopExactOut`

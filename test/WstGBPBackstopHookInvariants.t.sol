@@ -10,10 +10,10 @@ import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 import {WstGBPForkBase} from "./base/WstGBPForkBase.sol";
-import {WstGBPBackstopHook} from "../src/WstGBPBackstopHook.sol";
-import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
-import {WstGBPQuoter} from "../src/periphery/WstGBPQuoter.sol";
-import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
+import {WstGBPBackstopHook} from "../src/v4/WstGBPBackstopHook.sol";
+import {WstGBPSwapRouter} from "../src/v4/periphery/WstGBPSwapRouter.sol";
+import {WstGBPQuoter} from "../src/v4/periphery/WstGBPQuoter.sol";
+import {IwstGBP} from "../src/core/interfaces/IwstGBP.sol";
 
 /// @notice Stateful (invariant) suite for the pure-backstop hook. A `Handler` drives long, randomly
 ///         interleaved sequences of the four swap modes through the settle-first router, and the

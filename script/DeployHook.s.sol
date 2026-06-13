@@ -9,13 +9,17 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
-import {WstGBPBackstopHook} from "../src/WstGBPBackstopHook.sol";
-import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
-import {WstGBPQuoter} from "../src/periphery/WstGBPQuoter.sol";
-import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
+import {WstGBPBackstopHook} from "../src/v4/WstGBPBackstopHook.sol";
+import {WstGBPSwapRouter} from "../src/v4/periphery/WstGBPSwapRouter.sol";
+import {WstGBPQuoter} from "../src/v4/periphery/WstGBPQuoter.sol";
+import {WstGBPDirectAdapter} from "../src/adapter/WstGBPDirectAdapter.sol";
+import {IwstGBP} from "../src/core/interfaces/IwstGBP.sol";
 
 /// @notice Mines + CREATE2-deploys the `WstGBPBackstopHook`, initializes the tGBP/wstGBP pool (fee 0,
-///         tickSpacing 1, LP blocked), and deploys the settle-first router and quoter integrators use.
+///         tickSpacing 1, LP blocked), and deploys the settle-first router + quoter (the v4 venue) plus the
+///         `WstGBPDirectAdapter` (the non-v4 venue for DEX aggregators / CoW solvers — no flag mining, no
+///         pool). Asserts the I-02 cached-feed parity for the hook, the quoter, AND the adapter, and that
+///         the adapter is not on the tGBP ban list (it becomes the mint/redeem caller).
 ///
 /// Usage: ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy
 ///        (forge script script/DeployHook.s.sol --rpc-url $ETH_RPC_URL --private-key $PK
@@ -29,7 +33,13 @@ contract DeployHook is Script {
 
     function run()
         external
-        returns (WstGBPBackstopHook hook, WstGBPSwapRouter router, WstGBPQuoter quoter, PoolKey memory key)
+        returns (
+            WstGBPBackstopHook hook,
+            WstGBPSwapRouter router,
+            WstGBPQuoter quoter,
+            WstGBPDirectAdapter adapter,
+            PoolKey memory key
+        )
     {
         IPoolManager pm = IPoolManager(POOL_MANAGER);
         IwstGBP wrapper = IwstGBP(WSTGBP);
@@ -67,13 +77,23 @@ contract DeployHook is Script {
         // the hook executes against).
         require(address(quoter.act()) == wrapper.act(), "DeployHook: quoter act feed mismatch");
         require(address(quoter.pip()) == wrapper.pip(), "DeployHook: quoter pip feed mismatch");
+
+        // The non-v4 venue: a standalone approve+swap adapter that calls `wstGBP.mint`/`redeem` directly,
+        // for DEX aggregators / CoW solvers. No flag mining, no pool. Same cached-feed parity (I-02), and
+        // it must not be ban-listed because it becomes the mint/redeem caller (blacklist, permissive default).
+        adapter = new WstGBPDirectAdapter(wrapper);
+        require(address(adapter.act()) == wrapper.act(), "DeployHook: adapter act feed mismatch");
+        require(address(adapter.pip()) == wrapper.pip(), "DeployHook: adapter pip feed mismatch");
+        require(wrapper.canPass(address(adapter)), "DeployHook: adapter is ban-listed");
         vm.stopBroadcast();
 
-        console2.log("WstGBPBackstopHook:", address(hook));
-        console2.log("WstGBPSwapRouter:  ", address(router));
-        console2.log("WstGBPQuoter:      ", address(quoter));
-        console2.log("currency0 (tGBP):  ", tgbp);
-        console2.log("currency1 (wstGBP):", WSTGBP);
-        console2.log("Pool initialized. Swap via WstGBPSwapRouter (settle-first).");
+        console2.log("WstGBPBackstopHook:  ", address(hook));
+        console2.log("WstGBPSwapRouter:    ", address(router));
+        console2.log("WstGBPQuoter:        ", address(quoter));
+        console2.log("WstGBPDirectAdapter: ", address(adapter));
+        console2.log("currency0 (tGBP):    ", tgbp);
+        console2.log("currency1 (wstGBP):  ", WSTGBP);
+        console2.log("Pool initialized. v4: swap via WstGBPSwapRouter (settle-first).");
+        console2.log("Aggregators/CoW: swap via WstGBPDirectAdapter (approve + swap).");
     }
 }

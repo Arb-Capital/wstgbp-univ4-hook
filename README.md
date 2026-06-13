@@ -13,9 +13,20 @@ against any *separate* third-party LP pool is handled at the routing layer (Unis
 in-band LP inside the same pool was evaluated and **deferred** — it is preserved in git history (see
 [`ROADMAP.md`](ROADMAP.md)) and can be revived if in-pool LP demand materializes.
 
-Swaps must be **settle-first** — route via `src/periphery/WstGBPSwapRouter.sol` (or any settle-first
-solver/aggregator). Quotes come from `src/periphery/WstGBPQuoter.sol` or the off-chain formula. Full
-design lives in [`CLAUDE.md`](CLAUDE.md); the backlog in [`ROADMAP.md`](ROADMAP.md). The audited surface
+v4 swaps must be **settle-first** — route via `src/v4/periphery/WstGBPSwapRouter.sol` (or any settle-first
+solver/aggregator). Quotes come from `src/v4/periphery/WstGBPQuoter.sol` or the off-chain formula.
+
+**Non-v4 venue (`src/adapter/WstGBPDirectAdapter.sol`).** A standalone, ownerless `approve → swap` contract
+that calls `wstGBP.mint`/`redeem` **directly** (no pool, no mined flags), with the same prices and guards as
+the hook (shared `src/core/WstGBPWrap.sol`). It uses ordinary swap-then-settle semantics, so DEX aggregators
+(Odos / LI.FI / Paraswap) and CoW Protocol solvers can call it like any swap contract — no settle-first
+router needed. `swapExactInput(tokenIn, amountIn, minAmountOut, recipient, deadline)` /
+`swapExactOutput(...)` (+ Permit2 variants); `tokenIn == tGBP` buys, `tokenIn == wstGBP` sells. The same
+trust model below applies (it is a pure price-taker — pass real slippage bounds). Note: "CoW Hooks" are
+user pre/post-interactions, *not* a liquidity source; giving CoW solvers a route is
+[route integration](https://docs.cow.fi/cow-protocol/tutorials/solvers/routes_integration) of this adapter.
+
+Full design lives in [`CLAUDE.md`](CLAUDE.md); the backlog in [`ROADMAP.md`](ROADMAP.md). The audited surface
 and scope are in [`AUDIT_SCOPE.md`](AUDIT_SCOPE.md).
 
 ---
@@ -110,7 +121,7 @@ Flatpak/Snap browser opens local files through the xdg document portal, which sh
 the single file with the sandbox and so drops the report's CSS/images.
 
 Both run via the `Makefile` and exclude the test suite, deploy script, and vendored
-`src/base/BaseHook.sol` so the report reflects only the first-party surface. Set
+`src/v4/base/BaseHook.sol` so the report reflects only the first-party surface. Set
 `ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
 to a public RPC).
 

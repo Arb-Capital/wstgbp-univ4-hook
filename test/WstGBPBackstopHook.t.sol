@@ -19,11 +19,11 @@ import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
 import {WstGBPForkBase} from "./base/WstGBPForkBase.sol";
-import {WstGBPBackstopHook} from "../src/WstGBPBackstopHook.sol";
-import {BaseHook} from "../src/base/BaseHook.sol";
-import {WstGBPSwapRouter} from "../src/periphery/WstGBPSwapRouter.sol";
-import {IwstGBP} from "../src/interfaces/IwstGBP.sol";
-import {IMaseerAct, IMaseerPip} from "../src/interfaces/IMaseerFeeds.sol";
+import {WstGBPBackstopHook} from "../src/v4/WstGBPBackstopHook.sol";
+import {BaseHook} from "../src/v4/base/BaseHook.sol";
+import {WstGBPSwapRouter} from "../src/v4/periphery/WstGBPSwapRouter.sol";
+import {IwstGBP} from "../src/core/interfaces/IwstGBP.sol";
+import {IMaseerAct, IMaseerPip} from "../src/core/interfaces/IMaseerFeeds.sol";
 
 /// @dev MaseerOne exposes its immutable compliance feed via a public `cop()` getter (not in IwstGBP).
 interface IHasCop {

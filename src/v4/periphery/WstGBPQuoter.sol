@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IwstGBP} from "../interfaces/IwstGBP.sol";
-import {IMaseerAct, IMaseerPip} from "../interfaces/IMaseerFeeds.sol";
+import {IwstGBP} from "../../core/interfaces/IwstGBP.sol";
+import {IMaseerAct, IMaseerPip} from "../../core/interfaces/IMaseerFeeds.sol";
+import {WstGBPWrap} from "../../core/WstGBPWrap.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
-import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 
 /// @title WstGBPQuoter
 /// @notice Exact, gas-free quotes for the tGBP/wstGBP backstop pool.
@@ -60,22 +60,17 @@ contract WstGBPQuoter {
     ///      burncost (bid) for a sell. Byte-identical to `wrapper.mintcost()`/`burncost()`, one hop cheaper
     ///      (one `pip.read()` + one spread call). Returns 0 when the oracle is paused (`pip.read() == 0`).
     function _price(bool zeroForOne) internal view returns (uint256) {
-        uint256 nav = pip.read();
-        return zeroForOne ? act.mintcost(nav) : act.burncost(nav);
+        return WstGBPWrap.price(act, pip, zeroForOne);
     }
 
     /// @dev Exact-input math at a given backstop `price` (shared by the public quote and `previewSwap`).
     function _quoteIn(bool zeroForOne, uint256 amountIn, uint256 price) internal pure returns (uint256) {
-        return zeroForOne
-            ? FullMath.mulDiv(amountIn, WAD, price)  // wstGBP out = tGBP in * 1e18 / mintcost
-            : FullMath.mulDiv(amountIn, price, WAD); // tGBP out = wstGBP in * burncost / 1e18
+        return WstGBPWrap.quoteIn(zeroForOne, amountIn, price);
     }
 
     /// @dev Exact-output math (rounded up, matching the hook) at a given backstop `price`.
     function _quoteOut(bool zeroForOne, uint256 amountOut, uint256 price) internal pure returns (uint256) {
-        return zeroForOne
-            ? FullMath.mulDivRoundingUp(amountOut, price, WAD)  // tGBP in = ceil(wstGBP out * mintcost / 1e18)
-            : FullMath.mulDivRoundingUp(amountOut, WAD, price); // wstGBP in = ceil(tGBP out * 1e18 / burncost)
+        return WstGBPWrap.quoteOut(zeroForOne, amountOut, price);
     }
 
     // -----------------------------------------------------------------------
@@ -129,7 +124,7 @@ contract WstGBPQuoter {
             // `wrapper.mint(amountIn)` mints `amountIn*1e18/mintcost`, which for an exact-output buy is
             // >= the requested `amountOut` (the input was rounded up). Check capacity against that
             // minted amount, not `amountOut`, so the preview can't pass while `wrapper.mint` reverts.
-            uint256 minted = FullMath.mulDiv(amountIn, WAD, price);
+            uint256 minted = WstGBPWrap.quoteIn(true, amountIn, price);
             if (wrapper.totalSupply() + minted > wrapper.capacity()) return (false, "exceeds capacity");
         } else {
             // SELL: redeem `amountIn` wstGBP for tGBP. `price` == burncost.
@@ -138,7 +133,7 @@ contract WstGBPQuoter {
             // burn wstGBP without paying out, so the hook reverts `RedeemUnderpaid`.
             if (act.cooldown() != 0) return (false, "redeem cooldown active");
             if (amountIn < WAD) return (false, "below redeem minimum");
-            uint256 claim = FullMath.mulDiv(amountIn, price, WAD);
+            uint256 claim = WstGBPWrap.quoteIn(false, amountIn, price);
             if (IERC20Minimal(tgbp).balanceOf(address(wrapper)) < claim) return (false, "wrapper underfunded");
         }
         return (true, "");

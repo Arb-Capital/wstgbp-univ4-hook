@@ -59,11 +59,35 @@ all prices are WAD (1e18) tGBP-per-wstGBP.
   One quirk: `wstGBP.transfer` reverts if `dst == wstGBP` itself; the hook only ever transfers to
   the PoolManager, so this is fine.
 
+## Repo layout — two venues over one shared core
+
+As of 2026-06-12 the repo holds **two swap venues** over the same wstGBP `mint`/`redeem`, sharing one core:
+
+- **`src/core/`** — venue-agnostic shared code. `WstGBPWrap.sol` (the lockstep-critical library: `price`,
+  `quoteIn`/`quoteOut` exact rounding, `redeem` balance-diff safety, non-standard-ERC20 `transfer` — all
+  `internal`, embedded into each venue), plus `interfaces/IwstGBP.sol` and `interfaces/IMaseerFeeds.sol`.
+- **`src/v4/`** — the Uniswap v4 venue: `WstGBPBackstopHook.sol`, `base/BaseHook.sol` (vendored),
+  `periphery/WstGBPSwapRouter.sol` (settle-first router), `periphery/WstGBPQuoter.sol`. The hook's helper
+  bodies delegate to `WstGBPWrap`; `_beforeSwap` is unchanged.
+- **`src/adapter/`** — the non-v4 venue: `WstGBPDirectAdapter.sol`, a standalone ownerless `approve → swap`
+  contract that calls `wstGBP.mint`/`redeem` **directly** (no pool, no mined flags) for DEX aggregators
+  (Odos / LI.FI / Paraswap) and CoW Protocol solvers. Standard swap-then-settle semantics, exact-in/out +
+  Permit2 + view quotes, direction inferred from `tokenIn`. Same rounding/redeem-safety/funding/cooldown
+  guards as the hook (via `WstGBPWrap`); cross-venue parity tests pin adapter == quoter == hook math.
+
+**Why an adapter and not "a CoW hook":** CoW Hooks are user-attached pre/post *interactions* on an order,
+**not** a liquidity source solvers route through. To give solvers a route you expose a normal swap contract
++ price discovery and propose it for [route integration](https://docs.cow.fi/cow-protocol/tutorials/solvers/routes_integration);
+the same standard `approve → swap` adapter also satisfies Odos/LI.FI/Paraswap. v4 was the special case
+(settle-first + mined flags); everything else just calls the adapter. Per-aggregator work is off-chain
+**listing**, not new Solidity. Monorepo + one generic adapter was the chosen design (see [`ROADMAP.md`](ROADMAP.md)).
+
 ## The hook design (the important part)
 
-Files (in scope): `src/WstGBPBackstopHook.sol` (the hook), `src/base/BaseHook.sol` (vendored base),
-`src/interfaces/IwstGBP.sol`, `src/interfaces/IMaseerFeeds.sol` (the wrapper's cached price feeds),
-`src/periphery/WstGBPSwapRouter.sol` (settle-first router), `src/periphery/WstGBPQuoter.sol` (quoter).
+Files (v4 venue): `src/v4/WstGBPBackstopHook.sol` (the hook), `src/v4/base/BaseHook.sol` (vendored base),
+`src/core/interfaces/IwstGBP.sol`, `src/core/interfaces/IMaseerFeeds.sol` (the wrapper's cached price feeds),
+`src/v4/periphery/WstGBPSwapRouter.sol` (settle-first router), `src/v4/periphery/WstGBPQuoter.sol` (quoter),
+`src/core/WstGBPWrap.sol` (shared math/redeem core).
 
 `WstGBPBackstopHook` is a **return-delta custom-curve hook**. Its **backstop** core: `beforeSwap`
 returns a `BeforeSwapDelta` whose specified leg cancels the swap (AMM bypassed), `take`s the input from
@@ -84,7 +108,7 @@ be in the PoolManager when the hook runs: swaps must be **settle-first** (pay th
 The hook holds **no capital and has no owner** — it simply `take`s the input the router pre-paid,
 wraps/unwraps it via the wrapper, and settles the output.
 
-- **Use `src/periphery/WstGBPSwapRouter.sol`** (or any settle-first solver/aggregator integration):
+- **Use `src/v4/periphery/WstGBPSwapRouter.sol`** (or any settle-first solver/aggregator integration):
   it settles the input, swaps, and refunds unused input (exact-output uses a `maxAmountIn` bound).
   Depth is bounded only by `capacity()` (buys) and the wrapper's own tGBP reserves (sells).
 - **Stock "swap-then-settle" routers are not supported** — they pay input *after* `swap()` returns,
@@ -130,12 +154,12 @@ this pool (LP is blocked, so there is no AMM leg to blend). The stock v4 `Quoter
   - sell exact-in: `tGBP_out = wstGBP_in * burncost / 1e18`
   - buy exact-out: `tGBP_in = ceil(wstGBP_out * mintcost / 1e18)`
   - sell exact-out: `wstGBP_in = ceil(tGBP_out * 1e18 / burncost)`
-- **On-chain backstop quoter** `src/periphery/WstGBPQuoter.sol` — `quoteExactInput`/`quoteExactOutput`
+- **On-chain backstop quoter** `src/v4/periphery/WstGBPQuoter.sol` — `quoteExactInput`/`quoteExactOutput`
   return the exact backstop price, and `previewSwap(zeroForOne, amountSpecified)` also returns
   `(executable, reason)` (checks market open, dust thresholds, buy capacity, sell funding, redeem
   cooldown).
 
-Execute via `src/periphery/WstGBPSwapRouter.sol` (settle-first):
+Execute via `src/v4/periphery/WstGBPSwapRouter.sol` (settle-first):
 `swapExactInput(key, zeroForOne, amountIn, minAmountOut, recipient, deadline)` and
 `swapExactOutput(key, zeroForOne, amountOut, maxAmountIn, recipient, deadline)`. Quotes are
 point-in-time (the oracle ratchets up), so always pass real slippage bounds. `recipient == address(0)`
@@ -190,7 +214,7 @@ across three suites:
 ## Dependencies / toolchain
 
 - `lib/v4-periphery` @ `363226d` (the "Permissioned Pools" main; **note it no longer ships
-  `src/utils/BaseHook.sol`**, which is why we vendor `src/base/BaseHook.sol`) with nested
+  `src/utils/BaseHook.sol`**, which is why we vendor `src/v4/base/BaseHook.sol`) with nested
   `lib/v4-core` @ `v4.0.0` (`59d3ecf5`). Imports use the `@uniswap/v4-core/...` prefix
   (see `remappings.txt`).
 - solc **0.8.28**, `evm_version = cancun` (v4 flash accounting needs EIP-1153 transient storage; the
@@ -200,7 +224,7 @@ across three suites:
 ## Gotchas
 
 - Periphery `main` dropped `BaseHook` from `src/` — don't `import` it from periphery; use the
-  vendored `src/base/BaseHook.sol`.
+  vendored `src/v4/base/BaseHook.sol`.
 - `wstGBP.redeem` returns an **id, not an amount**, and can underpay — always balance-diff and
   pre-check funding.
 - v4 `PoolSwapTest` refunds leftover native balance to `msg.sender`; test/integrator contracts that

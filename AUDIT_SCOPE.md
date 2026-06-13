@@ -1,8 +1,19 @@
-# Audit Scope — tGBP/wstGBP Uniswap v4 Backstop Hook
+# Audit Scope — tGBP/wstGBP wstGBP-wrapping swap venues
 
-Prepared 2026-06-03. This document defines the surface for external audit. One hook is in scope:
-**`WstGBPBackstopHook`** (pure backstop, LP blocked). A hybrid variant was evaluated and deferred (see
-"Out of scope" below).
+Prepared 2026-06-03; adapter venue added 2026-06-12. This document defines the surface for external audit.
+Two **venues** route swaps through the same wstGBP `mint`/`redeem`, sharing one core:
+
+- **`WstGBPBackstopHook`** — the Uniswap **v4** venue (pure backstop, LP blocked). Mined CREATE2 address,
+  settle-first router. (`src/v4/**`)
+- **`WstGBPDirectAdapter`** — the **non-v4** venue: a standalone `approve → swap` adapter that calls
+  `wstGBP.mint`/`redeem` directly (no pool), for DEX aggregators (Odos / LI.FI / Paraswap) and CoW Protocol
+  solvers. (`src/adapter/**`)
+- **`WstGBPWrap`** (`src/core/**`) — the shared library both venues embed for price math, redeem
+  balance-diff safety, and the non-standard-ERC20 transfer. Pricing/redeem-safety lives here **once**, so
+  the two venues can never diverge (enforced by cross-venue parity tests).
+
+A hybrid v4 variant was evaluated and deferred (see "Out of scope"). Auditors can review the shared
+`src/core/**` once, then each venue (`src/v4/**`, `src/adapter/**`) as a thin delta over it.
 
 ## What the system does
 
@@ -15,19 +26,39 @@ model (the wstGBP/MaseerOne governance powers a swapper inherits): [`README.md`]
 
 ## In scope
 
+**Shared core (`src/core/**`) — reviewed once, used by both venues:**
+
 | File | Role |
 |---|---|
-| `src/WstGBPBackstopHook.sol` | The hook — custom-curve `beforeSwap` returning a `BeforeSwapDelta`; blocks LP via `beforeAddLiquidity` revert |
-| `src/base/BaseHook.sol` | Vendored base (periphery `main` dropped `src/utils/BaseHook.sol`) |
-| `src/interfaces/IwstGBP.sol` | wstGBP wrapper interface |
-| `src/interfaces/IMaseerFeeds.sol` | The wrapper's two immutable price-feed interfaces (`act`/`pip`), read directly by the hook |
-| `src/periphery/WstGBPSwapRouter.sol` | Settle-first router (exact-in/out, slippage/deadline/recipient, surplus refund, Permit2 entrypoints) |
-| `src/periphery/WstGBPQuoter.sol` | Backstop quoter + `previewSwap` executability |
-| `script/DeployHook.s.sol` | CREATE2 mine + deploy (hook + router + quoter), pool init, I-02 feed-proxy assertion |
-| `test/base/WstGBPForkBase.sol` | Shared mainnet-fork scaffolding (deploy/seed, slot constants, swap/quote/sign helpers) for the test suites |
-| `test/WstGBPBackstopHook.t.sol` | Mainnet-fork test suite — feature/regression/red-team (48 tests) |
-| `test/WstGBPBackstopHookFuzz.t.sol` | Adversarial math/attack-vector fuzz across the oracle price range (11 tests) |
-| `test/WstGBPBackstopHookInvariants.t.sol` | Stateful invariants: no value extraction, hook never drained, quoter==exec, no liquidity (4 tests) |
+| `src/core/WstGBPWrap.sol` | Shared library: `price` (mintcost/burncost off the cached feeds), `quoteIn`/`quoteOut` (the exact `FullMath` rounding), `redeem` (balance-diff safety), `transfer` (non-standard-ERC20). Embedded `internal` (no linking). |
+| `src/core/interfaces/IwstGBP.sol` | wstGBP wrapper interface |
+| `src/core/interfaces/IMaseerFeeds.sol` | The wrapper's two immutable price-feed interfaces (`act`/`pip`), read directly by both venues |
+
+**v4 venue (`src/v4/**`):**
+
+| File | Role |
+|---|---|
+| `src/v4/WstGBPBackstopHook.sol` | The hook — custom-curve `beforeSwap` returning a `BeforeSwapDelta`; blocks LP via `beforeAddLiquidity` revert. Helper bodies (mintcost/burncost/redeem/transfer) delegate to `WstGBPWrap`. |
+| `src/v4/base/BaseHook.sol` | Vendored base (periphery `main` dropped `src/utils/BaseHook.sol`) |
+| `src/v4/periphery/WstGBPSwapRouter.sol` | Settle-first router (exact-in/out, slippage/deadline/recipient, surplus refund, Permit2 entrypoints) |
+| `src/v4/periphery/WstGBPQuoter.sol` | Backstop quoter + `previewSwap` executability (math via `WstGBPWrap`) |
+
+**Adapter venue (`src/adapter/**`):**
+
+| File | Role |
+|---|---|
+| `src/adapter/WstGBPDirectAdapter.sol` | Standalone, ownerless, inventory-free `approve → swap` venue calling `wstGBP.mint`/`redeem` directly. exact-in/out + Permit2 + view quotes. Direction inferred from `tokenIn`. Same rounding/redeem-safety/funding/cooldown guards as the hook, via `WstGBPWrap`. |
+
+**Deploy + tests + config:**
+
+| File | Role |
+|---|---|
+| `script/DeployHook.s.sol` | CREATE2 mine + deploy (hook + router + quoter) + adapter; pool init; I-02 feed-proxy assertion for hook, quoter, AND adapter; adapter ban-list check |
+| `test/base/MaseerForkBase.sol` | Venue-agnostic fork scaffolding (addresses, slot constants, NAV/spread/seed/permit helpers) |
+| `test/base/WstGBPForkBase.sol` | v4-specific scaffolding (mine/deploy hook, pool init, settle-first swap helpers) — extends `MaseerForkBase` |
+| `test/base/WstGBPAdapterForkBase.sol` | Adapter scaffolding (deploy adapter + quoter, approve-and-swap helpers) — extends `MaseerForkBase` |
+| `test/WstGBPBackstopHook*.t.sol` | v4 suites — feature/regression/red-team (48), adversarial fuzz (11), stateful invariants (4) |
+| `test/adapter/WstGBPDirectAdapter*.t.sol` | Adapter suites — feature/parity/hardening (20), adversarial fuzz (6), stateful invariants (3) |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
 
 ## Out of scope
@@ -56,6 +87,17 @@ model (the wstGBP/MaseerOne governance powers a swapper inherits): [`README.md`]
 - **Sells pre-check wrapper funding** (`WrapperUnderfunded`) and assert full payout (`RedeemUnderpaid`),
   because `wstGBP.redeem` returns an id (not an amount) and can underpay; non-zero `cooldown()` makes the
   redeem non-atomic, so sells revert (`RedeemCooldownActive`).
+- **The adapter venue uses ordinary swap-then-settle.** Unlike the hook it pulls input *before* doing the
+  mint/redeem (plain `transferFrom`/Permit2), so it needs no settle-first router — any aggregator/solver
+  calls it like a normal swap contract. It computes the exact input up front (reads the oracle directly),
+  so exact-output pulls exactly that and needs **no refund** path. It is ownerless and holds no inventory
+  (only the same price-bounded exact-output dust as the hook). Direction is inferred from `tokenIn`
+  (`tgbp` ⇒ buy, `wst` ⇒ sell, else `UnsupportedToken`). It is the **mint/redeem caller**, so its address
+  must not be on the tGBP ban list (asserted at deploy). The same "no slippage of its own" property holds —
+  `swapExactInput`/`swapExactOutput` enforce `minAmountOut`/`maxAmountIn`; callers must pass real bounds.
+- **Cross-venue parity.** The adapter's execution equals both its own quote and the v4 `WstGBPQuoter` for
+  all four modes across the whole oracle price range (`WstGBPDirectAdapterFuzz`), so neither venue can price
+  differently from the other or from the shared `WstGBPWrap` math.
 
 ## Prior security review
 
@@ -136,15 +178,17 @@ Canonical pool key: `currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSp
 
 ```bash
 forge build
-ETH_RPC_URL=<archive-or-full-rpc> make test          # 59 fast fork tests (feature + fuzz); public RPC if unset
-make test-invariant                                  # the 4 stateful fork invariants only (~10 min)
-make test-all                                         # all 63 (a bare `forge test -vv` also runs the slow suite)
+ETH_RPC_URL=<archive-or-full-rpc> make test          # 85 fast fork tests (v4 59 + adapter 26); public RPC if unset
+make test-invariant                                  # the 7 stateful fork invariants only (v4 4 + adapter 3, ~10 min)
+make test-all                                         # all 92 (a bare `forge test -vv` also runs the slow suites)
 ```
 
 Tests fork mainnet against the real wstGBP/tGBP/oracle and the canonical PoolManager; the hook is
-CREATE2-mined and deployed on the fork, and the MaseerGate is forced open via `vm.store` for
-determinism. Coverage: pricing × 4, 25bps round-trip, quoter == execution (4 modes + fuzz),
-`previewSwap` flags, router hardening (minOut / maxIn / deadline / recipient / surplus refund, Permit2),
-LP-add revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity (I-02),
-capacity-uses-minted-amount (L-02), swap-first-routing rejection, and the red-team additions (paused-oracle
-preview, blacklist-bricks-pool, no-hook-slippage, callback access control).
+CREATE2-mined and deployed on the fork, the adapter is plain-deployed, and the MaseerGate is forced open via
+`vm.store` for determinism. Coverage: pricing × 4 on both venues, 25bps round-trip, quoter == execution
+(4 modes + fuzz), adapter == quoter cross-venue parity over the whole price range, `previewSwap` flags,
+router/adapter hardening (minOut / maxIn / deadline / recipient / surplus refund, Permit2, unsupported
+token), aggregator-style approve+swap, LP-add revert, market-closed / underfunded / cooldown / capacity
+reverts, cached-feed parity (I-02), capacity-uses-minted-amount (L-02), swap-first-routing rejection, and
+the red-team additions (paused-oracle preview, blacklist-bricks-pool, no-venue-slippage, callback access
+control).

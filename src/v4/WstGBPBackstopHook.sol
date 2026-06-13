@@ -2,8 +2,9 @@
 pragma solidity ^0.8.26;
 
 import {BaseHook} from "./base/BaseHook.sol";
-import {IwstGBP} from "./interfaces/IwstGBP.sol";
-import {IMaseerAct, IMaseerPip} from "./interfaces/IMaseerFeeds.sol";
+import {IwstGBP} from "../core/interfaces/IwstGBP.sol";
+import {IMaseerAct, IMaseerPip} from "../core/interfaces/IMaseerFeeds.sol";
+import {WstGBPWrap} from "../core/WstGBPWrap.sol";
 
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -181,18 +182,16 @@ contract WstGBPBackstopHook is BaseHook {
 
     /// @dev The backstop ask, read directly off the wrapper's immutable feeds (== `wrapper.mintcost()`).
     function _mintcost() internal view returns (uint256) {
-        return act.mintcost(pip.read());
+        return WstGBPWrap.price(act, pip, true);
     }
 
     /// @dev The backstop bid, read directly off the wrapper's immutable feeds (== `wrapper.burncost()`).
     function _burncost() internal view returns (uint256) {
-        return act.burncost(pip.read());
+        return WstGBPWrap.price(act, pip, false);
     }
 
     function _redeem(uint256 wIn) internal returns (uint256 received) {
-        uint256 before = IERC20Minimal(tgbp).balanceOf(address(this));
-        wrapper.redeem(wIn);
-        received = IERC20Minimal(tgbp).balanceOf(address(this)) - before;
+        received = WstGBPWrap.redeem(wrapper, tgbp, wIn);
     }
 
     function _requireWrapperFunded(uint256 needed) internal view {
@@ -207,24 +206,6 @@ contract WstGBPBackstopHook is BaseHook {
     }
 
     function _safeTransfer(address token, address to, uint256 amount) internal {
-        bool ok;
-        assembly ("memory-safe") {
-            let ptr := mload(0x40)
-            mstore(ptr, 0xa9059cbb00000000000000000000000000000000000000000000000000000000)
-            mstore(add(ptr, 0x04), to)
-            mstore(add(ptr, 0x24), amount)
-
-            ok := call(gas(), token, 0, ptr, 0x44, 0, 0x20)
-            if ok {
-                switch returndatasize()
-                case 0 { ok := 1 }
-                case 0x20 {
-                    returndatacopy(ptr, 0, 0x20)
-                    ok := iszero(iszero(mload(ptr)))
-                }
-                default { ok := 0 }
-            }
-        }
-        if (!ok) revert TransferFailed();
+        if (!WstGBPWrap.transfer(token, to, amount)) revert TransferFailed();
     }
 }
