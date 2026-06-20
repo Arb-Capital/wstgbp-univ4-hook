@@ -12,25 +12,25 @@ import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiqui
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
-import {MaseerForkBase} from "./MaseerForkBase.sol";
-import {WstGBPBackstopHook} from "../../src/v4/WstGBPBackstopHook.sol";
-import {WstGBPSwapRouter} from "../../src/v4/periphery/WstGBPSwapRouter.sol";
-import {WstGBPQuoter} from "../../src/v4/periphery/WstGBPQuoter.sol";
+import {WstGBPFixture} from "./WstGBPFixture.sol";
+import {WsgemBackstopHook} from "../../src/v4/WsgemBackstopHook.sol";
+import {WsgemSwapRouter} from "../../src/v4/periphery/WsgemSwapRouter.sol";
+import {WsgemQuoter} from "../../src/v4/periphery/WsgemQuoter.sol";
 
-/// @title WstGBPForkBase
-/// @notice v4-specific fork scaffolding: extends {MaseerForkBase} with the canonical PoolManager, mines +
-///         deploys the backstop hook at a flag-encoded address, initializes the canonical tGBP/wstGBP pool,
-///         seeds the test contract with tGBP/wstGBP, and exposes the settle-first swap/quote helpers. The
+/// @title WsgemForkBase
+/// @notice v4-specific fork scaffolding: extends {WstGBPFixture} with the canonical PoolManager, mines +
+///         deploys the backstop hook at a flag-encoded address, initializes the canonical gem/wsgem pool,
+///         seeds the test contract with gem/wsgem, and exposes the settle-first swap/quote helpers. The
 ///         three v4 suites (feature, fuzz, invariant) inherit this.
-/// @dev Behaviourally identical to the original single-file fork base; the venue-agnostic half (addresses,
-///      slot constants, price/seed/permit helpers) now lives in {MaseerForkBase} so the direct adapter can
-///      share it.
-abstract contract WstGBPForkBase is MaseerForkBase {
+/// @dev The token-specific half (addresses, gate/oracle slot constants, market/NAV/seed drivers) lives in
+///      {WstGBPFixture}; the generic half (Permit2 signing, balance/ceil helpers) in {ForkBase}. This base
+///      is pair-agnostic and reused as-is across fixtures.
+abstract contract WsgemForkBase is WstGBPFixture {
     IPoolManager constant PM = IPoolManager(0x000000000004444c5dc75cB358380D2e3dE08A90);
 
-    WstGBPBackstopHook hook;
-    WstGBPSwapRouter router;
-    WstGBPQuoter quoter;
+    WsgemBackstopHook hook;
+    WsgemSwapRouter router;
+    WsgemQuoter quoter;
     PoolModifyLiquidityTest lpRouter;
     PoolSwapTest swapFirstRouter;
     PoolKey key;
@@ -38,10 +38,10 @@ abstract contract WstGBPForkBase is MaseerForkBase {
     receive() external payable {}
 
     function setUp() public virtual override {
-        super.setUp(); // fork + force the MaseerGate markets open
+        super.setUp(); // fork + force the wrapper's markets open
 
-        router = new WstGBPSwapRouter(PM);
-        quoter = new WstGBPQuoter(wrapper);
+        router = new WsgemSwapRouter(PM);
+        quoter = new WsgemQuoter(wrapper);
         lpRouter = new PoolModifyLiquidityTest(PM);
         swapFirstRouter = new PoolSwapTest(PM);
 
@@ -49,26 +49,28 @@ abstract contract WstGBPForkBase is MaseerForkBase {
             uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
         bytes memory args = abi.encode(PM, wrapper);
         (address hookAddr, bytes32 salt) =
-            HookMiner.find(address(this), flags, type(WstGBPBackstopHook).creationCode, args);
-        hook = new WstGBPBackstopHook{salt: salt}(PM, wrapper);
+            HookMiner.find(address(this), flags, type(WsgemBackstopHook).creationCode, args);
+        hook = new WsgemBackstopHook{salt: salt}(PM, wrapper);
         assertEq(address(hook), hookAddr, "mined address");
 
+        // v4 sorts currencies ascending; sort so this base stays correct for any fixture's pair.
+        (address c0, address c1) = GEM < WSGEM ? (GEM, WSGEM) : (WSGEM, GEM);
         key = PoolKey({
-            currency0: Currency.wrap(TGBP),
-            currency1: Currency.wrap(WST),
+            currency0: Currency.wrap(c0),
+            currency1: Currency.wrap(c1),
             fee: 0,
             tickSpacing: 1,
             hooks: IHooks(address(hook))
         });
         PM.initialize(key, 79228162514264337593543950336);
 
-        _seedWst(1_000_000 * WAD, 500_000 * WAD);
+        _seedWsgem(1_000_000 * WAD, 500_000 * WAD);
 
-        IERC20Minimal(TGBP).approve(address(router), type(uint256).max);
-        IERC20Minimal(WST).approve(address(router), type(uint256).max);
-        IERC20Minimal(TGBP).approve(address(lpRouter), type(uint256).max);
-        IERC20Minimal(WST).approve(address(lpRouter), type(uint256).max);
-        IERC20Minimal(TGBP).approve(address(swapFirstRouter), type(uint256).max);
+        IERC20Minimal(GEM).approve(address(router), type(uint256).max);
+        IERC20Minimal(WSGEM).approve(address(router), type(uint256).max);
+        IERC20Minimal(GEM).approve(address(lpRouter), type(uint256).max);
+        IERC20Minimal(WSGEM).approve(address(lpRouter), type(uint256).max);
+        IERC20Minimal(GEM).approve(address(swapFirstRouter), type(uint256).max);
     }
 
     // --- helpers ---
@@ -92,7 +94,7 @@ abstract contract WstGBPForkBase is MaseerForkBase {
     }
 
     function _assertHookClean() internal view {
-        assertEq(_bal(TGBP, address(hook)), 0, "hook holds no tGBP");
-        assertEq(_bal(WST, address(hook)), 0, "hook holds no wstGBP");
+        assertEq(_bal(GEM, address(hook)), 0, "hook holds no gem");
+        assertEq(_bal(WSGEM, address(hook)), 0, "hook holds no wsgem");
     }
 }

@@ -1,49 +1,50 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IwstGBP} from "../core/interfaces/IwstGBP.sol";
-import {IMaseerAct, IMaseerPip} from "../core/interfaces/IMaseerFeeds.sol";
-import {WstGBPWrap} from "../core/WstGBPWrap.sol";
+import {Iwsgem} from "../core/interfaces/Iwsgem.sol";
+import {IAct, IPip} from "../core/interfaces/IFeeds.sol";
+import {WsgemWrap} from "../core/WsgemWrap.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
-/// @title WstGBPDirectAdapter
-/// @notice A standalone, ownerless, inventory-free venue that routes a tGBP<->wstGBP swap straight through
-///         the wstGBP wrapper's atomic mint/redeem at the protocol's own oracle prices — buys execute at
+/// @title WsgemDirectAdapter
+/// @notice A standalone, ownerless, inventory-free venue that routes a gem<->wsgem swap straight through
+///         the wsgem wrapper's atomic mint/redeem at the protocol's own oracle prices — buys execute at
 ///         `mintcost`, sells at `burncost`, the same ~25bps spread as the v4 backstop hook. Unlike the
 ///         hook it does NOT touch a Uniswap pool: it uses ordinary "approve → swap → receive"
 ///         (swap-then-settle) semantics, so any DEX aggregator (Odos, LI.FI, Paraswap) or CoW Protocol
 ///         solver can call it like a normal swap contract.
 ///
 /// @dev The price math, redeem balance-diff safety, and non-standard-ERC20 transfer all come from the
-///      shared {WstGBPWrap} library — byte-identical to `WstGBPBackstopHook`, so the two venues can never
+///      shared {WsgemWrap} library — byte-identical to `WsgemBackstopHook`, so the two venues can never
 ///      price differently (enforced by parity tests). The adapter computes the exact input up front (it
 ///      reads the oracle directly) and pulls exactly that, so exact-output needs no refund step.
 ///
 ///      SLIPPAGE IS THE CALLER'S RESPONSIBILITY. Each swap executes at the wrapper's live
-///      `mintcost`/`burncost`, which wstGBP governance can move between blocks. `swapExactInput` enforces
+///      `mintcost`/`burncost`, which wsgem governance can move between blocks. `swapExactInput` enforces
 ///      `minAmountOut`; `swapExactOutput` enforces `maxAmountIn` and full delivery. Always pass real
 ///      bounds. Quotes are point-in-time (the oracle ratchets up).
 ///
 ///      Compliance: the adapter becomes the `mint`/`redeem` caller, so its address must not be on the
-///      tGBP ban list (the blacklist is permissive by default — no allowlisting needed). Sells require a
-///      zero redeem cooldown (this deployment) so the wrapper settles tGBP atomically within the call.
-contract WstGBPDirectAdapter {
+///      gem ban list (the blacklist is permissive by default — no allowlisting needed). Sells require a
+///      zero redeem cooldown (this deployment) so the wrapper settles gem atomically within the call.
+contract WsgemDirectAdapter {
     /// @dev Canonical Permit2, deployed at the same address on every chain.
     ISignatureTransfer public constant PERMIT2 = ISignatureTransfer(0x000000000022D473030F116dDEE9F6B43aC78BA3);
 
-    IwstGBP public immutable wrapper;
-    address public immutable tgbp; // the wrapper's underlying ("gem")
-    address public immutable wst; // the wrapper token itself
+    Iwsgem public immutable wrapper;
+    address public immutable gem; // the wrapper's underlying ("gem")
+    address public immutable wsgem; // the wrapper token itself
     /// @dev The wrapper's two immutable price feeds, cached so the adapter prices off them directly
     ///      (`act.mintcost(pip.read())` / `burncost`) — byte-identical to `wrapper.mintcost()`/`burncost()`,
-    ///      matching `WstGBPBackstopHook`/`WstGBPQuoter`. See {IMaseerFeeds}.
-    IMaseerAct public immutable act;
-    IMaseerPip public immutable pip;
+    ///      matching `WsgemBackstopHook`/`WsgemQuoter`. See {IFeeds}.
+    IAct public immutable act;
+    IPip public immutable pip;
 
-    /// @notice Emitted once per swap. `buy` is true when the input is tGBP (mint), false when wstGBP (redeem).
+    /// @notice Emitted once per swap. `buy` is true when the input is gem (mint), false when wsgem (redeem).
     event Swap(address indexed payer, address indexed recipient, bool buy, uint256 amountIn, uint256 amountOut);
 
+    error IdenticalCurrencies();
     error UnsupportedToken(address token);
     error Expired();
     error ExcessiveInput(uint256 amountIn, uint256 maxAmountIn);
@@ -57,7 +58,7 @@ contract WstGBPDirectAdapter {
     struct SwapData {
         address payer;
         address recipient;
-        bool buy; // tokenIn == tgbp
+        bool buy; // tokenIn == gem
         bool exactInput;
         uint256 specified; // exact-in: amountIn; exact-out: amountOut
         uint256 limit; // exact-in: minAmountOut; exact-out: maxAmountIn
@@ -66,17 +67,22 @@ contract WstGBPDirectAdapter {
         bytes signature;
     }
 
-    constructor(IwstGBP _wrapper) {
+    constructor(Iwsgem _wrapper) {
         wrapper = _wrapper;
-        wst = address(_wrapper);
-        address _tgbp = _wrapper.gem();
-        tgbp = _tgbp;
-        act = IMaseerAct(_wrapper.act());
-        pip = IMaseerPip(_wrapper.pip());
-        // One-time max approval so `wrapper.mint` can pull tGBP from this adapter during buys. Safe:
-        // the adapter holds no persistent tGBP (only transient exact-output dust) and the wrapper is the
-        // trusted counterparty. `redeem` burns the adapter's own wstGBP, so it needs no approval.
-        IERC20Minimal(_tgbp).approve(wst, type(uint256).max);
+        address _wsgem = address(_wrapper);
+        wsgem = _wsgem;
+        address _gem = _wrapper.gem();
+        gem = _gem;
+        // `_isBuy` resolves direction from `tokenIn` by matching `gem` first; if the wrapper named itself
+        // as its own underlying the two tokens would be indistinguishable and sells unreachable. Reject it
+        // (mirrors the hook's same-currency guard).
+        if (_gem == _wsgem) revert IdenticalCurrencies();
+        act = IAct(_wrapper.act());
+        pip = IPip(_wrapper.pip());
+        // One-time max approval so `wrapper.mint` can pull gem from this adapter during buys. Safe:
+        // the adapter holds no persistent gem (only transient exact-output dust) and the wrapper is the
+        // trusted counterparty. `redeem` burns the adapter's own wsgem, so it needs no approval.
+        IERC20Minimal(_gem).approve(wsgem, type(uint256).max);
     }
 
     modifier ensure(uint256 deadline) {
@@ -89,7 +95,7 @@ contract WstGBPDirectAdapter {
     // -----------------------------------------------------------------------
 
     /// @notice Swap an exact input amount, reverting if the output is below `minAmountOut`.
-    /// @param tokenIn The input token: `tgbp` to buy wstGBP (mint), `wst` to sell wstGBP (redeem).
+    /// @param tokenIn The input token: `gem` to buy wsgem (mint), `wsgem` to sell wsgem (redeem).
     /// @param amountIn Exact input amount.
     /// @param minAmountOut Minimum acceptable output.
     /// @param recipient Receives the output (`address(0)` ⇒ `msg.sender`).
@@ -109,7 +115,7 @@ contract WstGBPDirectAdapter {
     }
 
     /// @notice Swap for an exact output amount, reverting if the input exceeds `maxAmountIn`.
-    /// @param tokenIn The input token: `tgbp` to buy wstGBP (mint), `wst` to sell wstGBP (redeem).
+    /// @param tokenIn The input token: `gem` to buy wsgem (mint), `wsgem` to sell wsgem (redeem).
     /// @param amountOut Exact output amount delivered to `recipient`.
     /// @param maxAmountIn Maximum input the payer will provide (the exact input is computed and pulled).
     /// @param recipient Receives the output (`address(0)` ⇒ `msg.sender`).
@@ -171,13 +177,13 @@ contract WstGBPDirectAdapter {
     /// @notice Output for an exact-input swap at the current backstop price.
     function quoteExactInput(address tokenIn, uint256 amountIn) external view returns (uint256 amountOut) {
         bool buy = _isBuy(tokenIn);
-        amountOut = WstGBPWrap.quoteIn(buy, amountIn, WstGBPWrap.price(act, pip, buy));
+        amountOut = WsgemWrap.quoteIn(buy, amountIn, WsgemWrap.price(act, pip, buy));
     }
 
     /// @notice Input required for an exact-output swap at the current backstop price (rounded up).
     function quoteExactOutput(address tokenIn, uint256 amountOut) external view returns (uint256 amountIn) {
         bool buy = _isBuy(tokenIn);
-        amountIn = WstGBPWrap.quoteOut(buy, amountOut, WstGBPWrap.price(act, pip, buy));
+        amountIn = WsgemWrap.quoteOut(buy, amountOut, WsgemWrap.price(act, pip, buy));
     }
 
     // -----------------------------------------------------------------------
@@ -186,48 +192,48 @@ contract WstGBPDirectAdapter {
 
     function _swap(SwapData memory d) internal returns (uint256 amountIn, uint256 amountOut) {
         if (d.buy) {
-            // BUY wstGBP: pay tGBP, mint at `mintcost`.
+            // BUY wsgem: pay gem, mint at `mintcost`.
             if (d.exactInput) {
                 amountIn = d.specified;
-                _pull(d, tgbp, amountIn);
+                _pull(d, gem, amountIn);
                 amountOut = wrapper.mint(amountIn);
                 if (amountOut < d.limit) revert InsufficientOutput(amountOut, d.limit);
             } else {
                 amountOut = d.specified;
-                amountIn = WstGBPWrap.quoteOut(true, amountOut, _mintcost());
+                amountIn = WsgemWrap.quoteOut(true, amountOut, _mintcost());
                 if (amountIn > d.limit) revert ExcessiveInput(amountIn, d.limit);
-                _pull(d, tgbp, amountIn);
+                _pull(d, gem, amountIn);
                 // Mints >= amountOut by construction (input rounded up); assert and keep the surplus as
                 // harmless price-bounded dust. Deliver exactly the requested output.
                 uint256 minted = wrapper.mint(amountIn);
                 if (minted < amountOut) revert InsufficientOutput(minted, amountOut);
             }
-            if (!WstGBPWrap.transfer(wst, d.recipient, amountOut)) revert TransferFailed();
+            if (!WsgemWrap.transfer(wsgem, d.recipient, amountOut)) revert TransferFailed();
         } else {
-            // SELL wstGBP: redeem to tGBP at `burncost`. Atomic only when cooldown is 0.
+            // SELL wsgem: redeem to gem at `burncost`. Atomic only when cooldown is 0.
             if (act.cooldown() != 0) revert RedeemCooldownActive();
             uint256 bc = _burncost();
             if (d.exactInput) {
                 amountIn = d.specified;
-                uint256 claim = WstGBPWrap.quoteIn(false, amountIn, bc);
+                uint256 claim = WsgemWrap.quoteIn(false, amountIn, bc);
                 _requireWrapperFunded(claim);
-                _pull(d, wst, amountIn);
-                amountOut = WstGBPWrap.redeem(wrapper, tgbp, amountIn);
+                _pull(d, wsgem, amountIn);
+                amountOut = WsgemWrap.redeem(wrapper, gem, amountIn);
                 // The funded pre-check assumes an atomic redeem; assert the wrapper paid the full claim so
                 // a cooldown change can't silently zero the output.
                 if (amountOut < claim) revert RedeemUnderpaid(claim, amountOut);
                 if (amountOut < d.limit) revert InsufficientOutput(amountOut, d.limit);
             } else {
                 amountOut = d.specified;
-                amountIn = WstGBPWrap.quoteOut(false, amountOut, bc);
+                amountIn = WsgemWrap.quoteOut(false, amountOut, bc);
                 if (amountIn > d.limit) revert ExcessiveInput(amountIn, d.limit);
-                uint256 claim = WstGBPWrap.quoteIn(false, amountIn, bc); // >= amountOut
+                uint256 claim = WsgemWrap.quoteIn(false, amountIn, bc); // >= amountOut
                 _requireWrapperFunded(claim);
-                _pull(d, wst, amountIn);
-                uint256 received = WstGBPWrap.redeem(wrapper, tgbp, amountIn); // >= amountOut; surplus is dust
+                _pull(d, wsgem, amountIn);
+                uint256 received = WsgemWrap.redeem(wrapper, gem, amountIn); // >= amountOut; surplus is dust
                 if (received < amountOut) revert RedeemUnderpaid(amountOut, received);
             }
-            if (!WstGBPWrap.transfer(tgbp, d.recipient, amountOut)) revert TransferFailed();
+            if (!WsgemWrap.transfer(gem, d.recipient, amountOut)) revert TransferFailed();
         }
         emit Swap(d.payer, d.recipient, d.buy, amountIn, amountOut);
     }
@@ -251,10 +257,10 @@ contract WstGBPDirectAdapter {
         }
     }
 
-    /// @dev BUY when `tokenIn` is tGBP, SELL when it is wstGBP; anything else is unroutable.
+    /// @dev BUY when `tokenIn` is gem, SELL when it is wsgem; anything else is unroutable.
     function _isBuy(address tokenIn) internal view returns (bool) {
-        if (tokenIn == tgbp) return true;
-        if (tokenIn == wst) return false;
+        if (tokenIn == gem) return true;
+        if (tokenIn == wsgem) return false;
         revert UnsupportedToken(tokenIn);
     }
 
@@ -263,15 +269,15 @@ contract WstGBPDirectAdapter {
     }
 
     function _mintcost() internal view returns (uint256) {
-        return WstGBPWrap.price(act, pip, true);
+        return WsgemWrap.price(act, pip, true);
     }
 
     function _burncost() internal view returns (uint256) {
-        return WstGBPWrap.price(act, pip, false);
+        return WsgemWrap.price(act, pip, false);
     }
 
     function _requireWrapperFunded(uint256 needed) internal view {
-        uint256 available = IERC20Minimal(tgbp).balanceOf(wst);
+        uint256 available = IERC20Minimal(gem).balanceOf(wsgem);
         if (available < needed) revert WrapperUnderfunded(needed, available);
     }
 }

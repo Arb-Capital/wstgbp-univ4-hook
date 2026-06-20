@@ -7,7 +7,7 @@ Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
 
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 
-Only **one** hook goes to external audit / mainnet, and it is **`WstGBPBackstopHook`** (pure backstop,
+Only **one** hook goes to external audit / mainnet, and it is **`WsgemBackstopHook`** (pure backstop,
 LP blocked). Rationale: it delivers the full product (infinite depth, tight ~25bps band) with a far
 smaller audit surface, and best-execution against any *separate* third-party LP pool is handled at the
 routing layer (Uniswap routing / UniswapX + arbitrage pinning a vanilla pool into the band) rather than
@@ -20,8 +20,8 @@ is in `AUDIT_SCOPE.md`. This resolves the P2 item (6) consolidation question bel
 
 To expose the same wstGBP `mint`/`redeem` to **CoW Protocol + DEX aggregators (Odos / LI.FI / Paraswap)**,
 keep everything in **this repo** (monorepo) restructured around a shared core, and ship **one generic
-adapter** rather than a bespoke contract per venue. Layout: `src/core/` (shared `WstGBPWrap` lib +
-interfaces), `src/v4/` (the hook + router + quoter, moved), `src/adapter/` (`WstGBPDirectAdapter`).
+adapter** rather than a bespoke contract per venue. Layout: `src/core/` (shared `WsgemWrap` lib +
+interfaces), `src/v4/` (the hook + router + quoter, moved), `src/adapter/` (`WsgemDirectAdapter`).
 
 Key finding: **"CoW Hooks" are user-attached pre/post *interactions* on an order, not a liquidity source.**
 Giving solvers a route through `mint`/`redeem` is [route integration](https://docs.cow.fi/cow-protocol/tutorials/solvers/routes_integration)
@@ -29,19 +29,19 @@ Giving solvers a route through `mint`/`redeem` is [route integration](https://do
 Paraswap all want the *same* `approve → swap` contract, so the on-chain artifact is one generic adapter;
 v4 was the special case (settle-first + mined flags). Per-aggregator effort is **off-chain listing**.
 
-- [x] **`src/core/WstGBPWrap.sol`** — shared library (price, exact-in/out rounding, redeem balance-diff,
+- [x] **`src/core/WsgemWrap.sol`** — shared library (price, exact-in/out rounding, redeem balance-diff,
       ERC20 transfer), embedded `internal`. Hook + quoter + adapter all source their math here; cross-venue
       parity tests pin adapter == quoter == hook so they can never drift.
-- [x] **`src/adapter/WstGBPDirectAdapter.sol`** — ownerless, inventory-free, no pool. exact-in/out +
+- [x] **`src/adapter/WsgemDirectAdapter.sol`** — ownerless, inventory-free, no pool. exact-in/out +
       Permit2 + view quotes; direction from `tokenIn`; same funding/cooldown/redeem-underpaid guards as the
       hook. Standard swap-then-settle — works with stock aggregator executors and CoW solver interactions.
 - [x] Restructure into `src/core` + `src/v4` + `src/adapter` (behavior-preserving; 59 v4 tests unchanged).
-      Fork base split into `MaseerForkBase` (agnostic) + `WstGBPForkBase` (v4) + `WstGBPAdapterForkBase`.
-- [x] Adapter test suites: `WstGBPDirectAdapter.t.sol` (20 — feature/parity/hardening + aggregator-style
-      approve+swap + Permit2 + every wrapper-gated revert), `...Fuzz.t.sol` (6 — full-NAV-range parity,
-      exact-out ceiling, round-trip-never-profits), `...Invariants.t.sol` (3 — no extraction, bounded dust,
-      quoter==exec). Now **92 tests** total (85 fast + 7 invariant).
-- [x] Deploy wiring: `DeployHook.s.sol` also deploys the adapter, asserts its I-02 cached-feed parity, and
+      Fork base split into `ForkBase` (agnostic) + `WsgemForkBase` (v4) + `WsgemAdapterForkBase`.
+- [x] Adapter test suites: `WsgemDirectAdapter.t.sol` (21 — feature/parity/hardening + aggregator-style
+      approve+swap + Permit2 + every wrapper-gated revert + same-currency guard), `...Fuzz.t.sol` (6 —
+      full-NAV-range parity, exact-out ceiling, round-trip-never-profits), `...Invariants.t.sol` (3 — no
+      extraction, bounded dust, quoter==exec). Now **98 tests** total (91 fast + 7 invariant).
+- [x] Deploy wiring: `DeployWstGBP.s.sol` also deploys the adapter, asserts its I-02 cached-feed parity, and
       checks it is not ban-listed. `deploy-dry` validated end-to-end on a mainnet fork.
 - [ ] **Off-chain listing (per venue, no Solidity):** CoW DAO forum route-integration proposal (documented
       swap+quote interface + price discovery — the adapter view or an API); Paraswap `paraswap-dex-lib`
@@ -50,31 +50,33 @@ v4 was the special case (settle-first + mined flags). Per-aggregator effort is *
 
 ## Done
 
-- [x] **Hook (shipped): `src/v4/WstGBPBackstopHook.sol`** (flags `0x888`) — pure backstop, LP blocked,
+- [x] **Hook (shipped): `src/v4/WsgemBackstopHook.sol`** (flags `0x888`) — pure backstop, LP blocked,
       ownerless + no capital, exact-in/out both directions, sharing the router + quoter.
       - A `WstGBPHybridHook` (flags `0x88`, best-ex: in-band LP first then backstop) was also built but is
         now **deferred and removed from the tree** (see the Decision note above; preserved at `b7a5c5a`).
 - [x] Vendored `src/v4/base/BaseHook.sol` (this periphery pin dropped `BaseHook`).
-- [x] `src/core/interfaces/IwstGBP.sol`.
-- [x] Settle-first periphery router — `src/v4/periphery/WstGBPSwapRouter.sol` (exact-in/out,
+- [x] `src/core/interfaces/Iwsgem.sol`.
+- [x] Settle-first periphery router — `src/v4/periphery/WsgemSwapRouter.sol` (exact-in/out,
       minOut/maxIn/deadline/recipient, surplus refund).
-- [x] Quoter — `src/v4/periphery/WstGBPQuoter.sol`: backstop quotes + `previewSwap` executability.
+- [x] Quoter — `src/v4/periphery/WsgemQuoter.sol`: backstop quotes + `previewSwap` executability.
       Off-chain formula in `CLAUDE.md`.
 - [x] **LP-aware quoter (deferred with the hybrid)** — `src/periphery/WstGBPHybridQuoter.sol` replayed
       v4's `Pool.swap` to the backstop edge + priced the residual at the oracle (exact hybrid blend,
       fuzz-validated). Removed from the tree with the hybrid; preserved at `b7a5c5a`.
-- [x] Deploy script — `script/DeployHook.s.sol`: CREATE2-mines the backstop flags `0x888`, pool init
+- [x] Deploy script — `script/DeployWstGBP.s.sol`: CREATE2-mines the backstop flags `0x888`, pool init
       fee 0 / tickSpacing 1, deploys router + quoter, and asserts the hook's cached `act`/`pip` feed
       proxies equal the wrapper's (I-02).
-- [x] Mainnet-fork tests (63 across three suites, all sharing `test/base/WstGBPForkBase.sol`):
-      `WstGBPBackstopHook.t.sol` (48) — pricing, router hardening + Permit2, quoter + `previewSwap`,
-      guards, capacity (L-02), cached-feed parity (I-02), swap-first rejection;
-      `WstGBPBackstopHookFuzz.t.sol` (11) — adversarial math fuzzed across the whole oracle price range
+- [x] Mainnet-fork tests (65 across three suites, all sharing `test/base/WsgemForkBase.sol`):
+      `WsgemBackstopHook.t.sol` (50) — pricing, router hardening + Permit2, quoter + `previewSwap`,
+      guards, capacity (L-02), cached-feed parity (I-02), swap-first rejection, currency-ordering adaptation;
+      `WsgemBackstopHookFuzz.t.sol` (11) — adversarial math fuzzed across the whole oracle price range
       (4-mode quoter==exec, exact-out ceiling/no-overcharge, bounded sub-par over-mint dust, round-trips
       never profit, donated-balance no-subsidy/no-drain, extreme-price/`int128`/zero clean reverts,
-      Permit2 replay rejection); `WstGBPBackstopHookInvariants.t.sol` (4) — stateful no-extraction /
+      Permit2 replay rejection); `WsgemBackstopHookInvariants.t.sol` (4) — stateful no-extraction /
       hook-never-drained / quoter==exec / no-liquidity invariants (`[profile.default.invariant]`).
-      (The hybrid's suite was removed with the hybrid; preserved at `b7a5c5a`.)
+      A standalone `WsgemFlippedOrderingHook.t.sol` (3) runs end-to-end buys/sells in the flipped token
+      ordering (wsgem = currency0) against mock tokens, proving the hook adapts when the wrapper sorts below
+      its underlying. (The hybrid's suite was removed with the hybrid; preserved at `b7a5c5a`.)
 - [x] **Pre-deployment security review (2026-06-09, `docs/SECURITY_REVIEW_2026-06-09.md`)** — **ship
       verdict**, no code findings (nothing ≥ Medium; no Solidity changes). Hand-verified all four
       `BeforeSwapDelta` branches, router delta/refund/Permit2 logic, quoter parity, vendored-BaseHook
@@ -97,14 +99,14 @@ v4 was the special case (settle-first + mined flags). Per-aggregator effort is *
 
 ### P1 — Integration layer (needed before bots can use it)
 
-- [x] **Quoting.** `WstGBPQuoter` (on-chain, exact, with `previewSwap` executability) + off-chain
+- [x] **Quoting.** `WsgemQuoter` (on-chain, exact, with `previewSwap` executability) + off-chain
       formula documented in `CLAUDE.md`. Tests assert quote == execution for all four modes.
-- [x] **Harden `WstGBPSwapRouter`**: split into `swapExactInput` (enforces `minAmountOut`) /
+- [x] **Harden `WsgemSwapRouter`**: split into `swapExactInput` (enforces `minAmountOut`) /
       `swapExactOutput` (enforces `maxAmountIn`, refunds surplus); both take `deadline` + `recipient`
       (`address(0)` ⇒ `msg.sender`). Tested: minOut, maxIn, deadline, recipient, surplus refund.
       - [x] Permit2 entrypoints — `swapExactInputPermit2`/`swapExactOutputPermit2` (SignatureTransfer;
             payer signs a `PermitTransferFrom`, no router approval). Fork-tested vs the approval path.
-- [x] **Deploy the router (and quoter)** from `script/DeployHook.s.sol`.
+- [x] **Deploy the router (and quoter)** from `script/DeployWstGBP.s.sol`.
 
 ### P2 — M2: best-execution across third-party LP + backstop (the "hybrid")
 
@@ -152,7 +154,7 @@ edge, not a fixed band — so it self-corrects as the rate moves out of where LP
       market-closed + underfunded reverts. Hybrid now has full test parity with M1 + LP.
 - [x] **(5)** Deploy script + quoter for the hybrid — `WstGBPHybridQuoter` (LP-aware, exact: replays
       the AMM to the edge via `StateLibrary` + backstops the residual) is deployed alongside the hybrid
-      in `script/DeployHook.s.sol`.
+      in `script/DeployWstGBP.s.sol`.
 - [x] **(6) Consolidation — RESOLVED (2026-06-03).** Chose the **pure backstop** (see the Decision note
       at the top). The hybrid hook/quoter/tests were removed from the tree (preserved at `b7a5c5a`); the
       deploy script now deploys only the backstop. Revisit the hybrid only if in-pool LP demand materializes.
@@ -175,7 +177,7 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
 
 ### P4 — Nice to have
 
-- [x] Integrator events — `WstGBPSwapRouter` emits `Swap(payer, recipient, poolId, zeroForOne,
+- [x] Integrator events — `WsgemSwapRouter` emits `Swap(payer, recipient, poolId, zeroForOne,
       amountIn, amountOut)` once per swap (all four entrypoints), beyond the PoolManager's own `Swap`.
 - [x] Security review / audit prep pass — done (reports under `~/.claude/plans/`).
       Fixed F1 (`RedeemUnderpaid` + cooldown handling: hybrid sells fall back to LP, backstop reverts;
@@ -194,10 +196,10 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
       (`quote == execution` parity + round-trip tests unchanged):
       - Both hooks now read the backstop price **directly off the wrapper's immutable feeds**
         (`act.mintcost(pip.read())` / `act.burncost(pip.read())` / `act.cooldown()`) instead of
-        `wrapper.mintcost()`/`burncost()`/`cooldown()`, skipping the MaseerOne dispatch hop. `act`/`pip`
-        are `immutable` in MaseerOne, fetched once in each constructor and cached as immutables ⇒
+        `wrapper.mintcost()`/`burncost()`/`cooldown()`, skipping the wrapper dispatch hop. `act`/`pip`
+        are `immutable` in the wrapper, fetched once in each constructor and cached as immutables ⇒
         byte-identical to the wrapper facade (`mint`/`redeem` use the same feeds). New
-        `src/core/interfaces/IMaseerFeeds.sol`; `IwstGBP` gained `act()`/`pip()` getters; quoters left on the
+        `src/core/interfaces/IFeeds.sol`; `Iwsgem` gained `act()`/`pip()` getters; quoters left on the
         facade (off-chain; same value ⇒ parity preserved).
       - Backstop sell-exact-out deduped (was reading `burncost()` twice); hybrid reads the direction's
         cost **once per swap** and threads it into `_edgeSqrtPrice`/`_backstopExactIn`/`_backstopExactOut`
@@ -222,7 +224,7 @@ edge, so best-ex is no longer automatic for arbitrary settle-first callers.
       - **L-01 (Low):** dynamic-fee (`0x800000`) and `>=100%` fee keys now revert `PoolNotSupported`
         in the hook and quoter (`key.fee >= PIPS`, plus a combined `swapFee >= PIPS` guard) instead of
         underflowing / dividing by zero in the edge math. Normal static fees (5bps, 30bps) unaffected.
-      - **L-02 (Low):** `WstGBPQuoter.previewSwap` capacity check now uses the **minted** amount
+      - **L-02 (Low):** `WsgemQuoter.previewSwap` capacity check now uses the **minted** amount
         (`amountIn·1e18/mintcost`), which for an exact-output buy is `>=` the requested output, instead
         of the requested output — closing a false `executable=true` at the capacity boundary.
       - Informational items (I-01..I-05: canonical-PoolKey docs, cached-feed monitoring, `ffi=false`,

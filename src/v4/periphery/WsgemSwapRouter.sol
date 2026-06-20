@@ -12,12 +12,12 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
-/// @title WstGBPSwapRouter
-/// @notice A "settle-first" router for the tGBP/wstGBP backstop pool.
+/// @title WsgemSwapRouter
+/// @notice A "settle-first" router for the gem/wsgem backstop pool.
 /// @dev The backstop hook wraps/unwraps the swap's input token during `beforeSwap`, which runs before
 ///      a v4 swap surfaces the taker's input. So this router **settles the input into the PoolManager
 ///      before calling `swap`**, letting the hook take those exact incoming tokens and feed them into
-///      `wstGBP.mint`/`redeem` — no hook buffer required. Any solver/aggregator that settles-first
+///      `wsgem.mint`/`redeem` — no hook buffer required. Any solver/aggregator that settles-first
 ///      works the same way.
 ///
 ///      Slippage/safety: `swapExactInput` enforces `minAmountOut`; `swapExactOutput` enforces
@@ -25,7 +25,7 @@ import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol"
 ///      a `deadline` and a `recipient` (`address(0)` ⇒ `msg.sender`). The payer (`msg.sender`) must
 ///      approve this router for the input token, OR use the `*Permit2` entrypoints and sign a Permit2
 ///      `PermitTransferFrom` (the payer approves the canonical Permit2, not this router).
-contract WstGBPSwapRouter is IUnlockCallback {
+contract WsgemSwapRouter is IUnlockCallback {
     using TransientStateLibrary for IPoolManager;
     using PoolIdLibrary for PoolKey;
 
@@ -78,8 +78,10 @@ contract WstGBPSwapRouter is IUnlockCallback {
     // -----------------------------------------------------------------------
 
     /// @notice Swap an exact input amount, reverting if the output is below `minAmountOut`.
-    /// @param zeroForOne True to buy wstGBP with tGBP, false to sell wstGBP for tGBP.
-    /// @param amountIn Exact input (tGBP for a buy, wstGBP for a sell).
+    /// @param zeroForOne Swap direction per `PoolManager.swap` (pay currency0). Whether that is a buy of
+    ///        wsgem (mint) or a sell (redeem) depends on the pool's token ordering — it is a buy iff it
+    ///        equals the hook's `gemIsZero`. For the tGBP/wstGBP pool (gem = currency0) true is a buy.
+    /// @param amountIn Exact input (gem for a buy, wsgem for a sell).
     /// @param minAmountOut Minimum acceptable output.
     /// @param recipient Receives the output (`address(0)` ⇒ `msg.sender`).
     /// @param deadline Latest block timestamp at which the swap may execute.
@@ -96,8 +98,10 @@ contract WstGBPSwapRouter is IUnlockCallback {
     }
 
     /// @notice Swap for an exact output amount, reverting if the input exceeds `maxAmountIn`.
-    /// @param zeroForOne True to buy wstGBP with tGBP, false to sell wstGBP for tGBP.
-    /// @param amountOut Exact output (wstGBP for a buy, tGBP for a sell).
+    /// @param zeroForOne Swap direction per `PoolManager.swap` (pay currency0). Whether that is a buy of
+    ///        wsgem (mint) or a sell (redeem) depends on the pool's token ordering — it is a buy iff it
+    ///        equals the hook's `gemIsZero`. For the tGBP/wstGBP pool (gem = currency0) true is a buy.
+    /// @param amountOut Exact output (wsgem for a buy, gem for a sell).
     /// @param maxAmountIn Maximum input the payer will provide; surplus is refunded.
     /// @param recipient Receives the output (`address(0)` ⇒ `msg.sender`).
     /// @param deadline Latest block timestamp at which the swap may execute.

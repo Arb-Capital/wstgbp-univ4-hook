@@ -18,20 +18,21 @@ import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
-import {WstGBPForkBase} from "./base/WstGBPForkBase.sol";
-import {WstGBPBackstopHook} from "../src/v4/WstGBPBackstopHook.sol";
+import {WsgemForkBase} from "./base/WsgemForkBase.sol";
+import {WsgemBackstopHook} from "../src/v4/WsgemBackstopHook.sol";
 import {BaseHook} from "../src/v4/base/BaseHook.sol";
-import {WstGBPSwapRouter} from "../src/v4/periphery/WstGBPSwapRouter.sol";
-import {IwstGBP} from "../src/core/interfaces/IwstGBP.sol";
-import {IMaseerAct, IMaseerPip} from "../src/core/interfaces/IMaseerFeeds.sol";
+import {WsgemSwapRouter} from "../src/v4/periphery/WsgemSwapRouter.sol";
+import {WsgemQuoter} from "../src/v4/periphery/WsgemQuoter.sol";
+import {Iwsgem} from "../src/core/interfaces/Iwsgem.sol";
+import {IAct, IPip} from "../src/core/interfaces/IFeeds.sol";
 
-/// @dev MaseerOne exposes its immutable compliance feed via a public `cop()` getter (not in IwstGBP).
+/// @dev The wsgem wrapper exposes its immutable compliance feed via a public `cop()` getter (not in Iwsgem).
 interface IHasCop {
     function cop() external view returns (address);
 }
 
 /// @notice Mainnet-fork tests for the pure-backstop hook (no LP) + the settle-first router & quoter.
-contract WstGBPBackstopHookForkTest is WstGBPForkBase {
+contract WsgemBackstopHookForkTest is WsgemForkBase {
     using PoolIdLibrary for PoolKey;
 
     // --- Pricing (buy @ mintcost, sell @ burncost) ---
@@ -39,51 +40,51 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     function test_buyExactInput() public {
         uint256 amtIn = 1_000 * WAD;
         uint256 expectedOut = amtIn * WAD / wrapper.mintcost();
-        uint256 t0 = _bal(TGBP, address(this));
-        uint256 w0 = _bal(WST, address(this));
+        uint256 t0 = _bal(GEM, address(this));
+        uint256 w0 = _bal(WSGEM, address(this));
         assertEq(_swapIn(true, amtIn), expectedOut, "router output");
-        assertEq(_bal(TGBP, address(this)), t0 - amtIn, "exact tGBP spent");
-        assertEq(_bal(WST, address(this)), w0 + expectedOut, "wstGBP at mintcost");
+        assertEq(_bal(GEM, address(this)), t0 - amtIn, "exact gem spent");
+        assertEq(_bal(WSGEM, address(this)), w0 + expectedOut, "wsgem at mintcost");
         _assertHookClean();
     }
 
     function test_buyExactOutput() public {
         uint256 amtOut = 1_000 * WAD;
         uint256 expectedIn = _ceil(amtOut * wrapper.mintcost(), WAD);
-        uint256 t0 = _bal(TGBP, address(this));
-        uint256 w0 = _bal(WST, address(this));
+        uint256 t0 = _bal(GEM, address(this));
+        uint256 w0 = _bal(WSGEM, address(this));
         assertEq(_swapOut(true, amtOut, expectedIn + 10 * WAD), expectedIn, "input spent");
-        assertEq(_bal(WST, address(this)), w0 + amtOut, "exact wstGBP out");
-        assertEq(_bal(TGBP, address(this)), t0 - expectedIn, "tGBP paid (rounded up)");
+        assertEq(_bal(WSGEM, address(this)), w0 + amtOut, "exact wsgem out");
+        assertEq(_bal(GEM, address(this)), t0 - expectedIn, "gem paid (rounded up)");
     }
 
     function test_sellExactInput() public {
         uint256 amtIn = 1_000 * WAD;
         uint256 expectedOut = amtIn * wrapper.burncost() / WAD;
-        uint256 t0 = _bal(TGBP, address(this));
-        uint256 w0 = _bal(WST, address(this));
+        uint256 t0 = _bal(GEM, address(this));
+        uint256 w0 = _bal(WSGEM, address(this));
         assertEq(_swapIn(false, amtIn), expectedOut, "router output");
-        assertEq(_bal(WST, address(this)), w0 - amtIn, "exact wstGBP spent");
-        assertEq(_bal(TGBP, address(this)), t0 + expectedOut, "tGBP at burncost");
+        assertEq(_bal(WSGEM, address(this)), w0 - amtIn, "exact wsgem spent");
+        assertEq(_bal(GEM, address(this)), t0 + expectedOut, "gem at burncost");
         _assertHookClean();
     }
 
     function test_sellExactOutput() public {
         uint256 amtOut = 1_000 * WAD;
         uint256 expectedIn = _ceil(amtOut * WAD, wrapper.burncost());
-        uint256 t0 = _bal(TGBP, address(this));
-        uint256 w0 = _bal(WST, address(this));
+        uint256 t0 = _bal(GEM, address(this));
+        uint256 w0 = _bal(WSGEM, address(this));
         assertEq(_swapOut(false, amtOut, expectedIn + 10 * WAD), expectedIn, "input spent");
-        assertEq(_bal(TGBP, address(this)), t0 + amtOut, "exact tGBP out");
-        assertEq(_bal(WST, address(this)), w0 - expectedIn, "wstGBP paid (rounded up)");
+        assertEq(_bal(GEM, address(this)), t0 + amtOut, "exact gem out");
+        assertEq(_bal(WSGEM, address(this)), w0 - expectedIn, "wsgem paid (rounded up)");
     }
 
     function test_roundTripSpreadIsAboutTwentyFiveBps() public {
         uint256 amtIn = 1_000 * WAD;
-        uint256 t0 = _bal(TGBP, address(this));
+        uint256 t0 = _bal(GEM, address(this));
         uint256 wReceived = _swapIn(true, amtIn);
         _swapIn(false, wReceived);
-        uint256 netLoss = t0 - _bal(TGBP, address(this));
+        uint256 netLoss = t0 - _bal(GEM, address(this));
         assertGe(netLoss, amtIn * 20 / 10_000, "spread >= ~20bps");
         assertLe(netLoss, amtIn * 30 / 10_000, "spread <= ~30bps");
     }
@@ -119,7 +120,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     function test_minAmountOutEnforced() public {
         uint256 amtIn = 1_000 * WAD;
         uint256 q = quoter.quoteExactInput(true, amtIn);
-        vm.expectRevert(abi.encodeWithSelector(WstGBPSwapRouter.InsufficientOutput.selector, q, q + 1));
+        vm.expectRevert(abi.encodeWithSelector(WsgemSwapRouter.InsufficientOutput.selector, q, q + 1));
         router.swapExactInput(key, true, amtIn, q + 1, address(this), block.timestamp);
     }
 
@@ -131,7 +132,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     }
 
     function test_deadlineEnforced() public {
-        vm.expectRevert(WstGBPSwapRouter.Expired.selector);
+        vm.expectRevert(WsgemSwapRouter.Expired.selector);
         router.swapExactInput(key, true, 1_000 * WAD, 0, address(this), block.timestamp - 1);
     }
 
@@ -139,18 +140,18 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         address bob = address(0xB0B);
         uint256 amtIn = 1_000 * WAD;
         uint256 expected = quoter.quoteExactInput(true, amtIn);
-        uint256 payerWst = _bal(WST, address(this));
+        uint256 payerWsgem = _bal(WSGEM, address(this));
         router.swapExactInput(key, true, amtIn, 0, bob, block.timestamp);
-        assertEq(_bal(WST, bob), expected, "recipient got output");
-        assertEq(_bal(WST, address(this)), payerWst, "payer got none");
+        assertEq(_bal(WSGEM, bob), expected, "recipient got output");
+        assertEq(_bal(WSGEM, address(this)), payerWsgem, "payer got none");
     }
 
     function test_exactOutputRefundsSurplusToPayer() public {
         uint256 amtOut = 1_000 * WAD;
         uint256 q = quoter.quoteExactOutput(true, amtOut);
-        uint256 t0 = _bal(TGBP, address(this));
+        uint256 t0 = _bal(GEM, address(this));
         assertEq(_swapOut(true, amtOut, q + 5_000 * WAD), q, "spent == quote");
-        assertEq(_bal(TGBP, address(this)), t0 - q, "surplus refunded");
+        assertEq(_bal(GEM, address(this)), t0 - q, "surplus refunded");
     }
 
     // --- Guards ---
@@ -169,13 +170,13 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     }
 
     function test_sellRevertsWhenWrapperUnderfunded() public {
-        deal(TGBP, WST, 1 * WAD);
+        deal(GEM, WSGEM, 1 * WAD);
         vm.expectRevert();
         _swapIn(false, 1_000 * WAD);
     }
 
-    /// @notice F1 regression: a non-zero redemption cooldown makes `wstGBP.redeem` defer payout, so a
-    ///         sell would burn the seller's wstGBP for ~0 tGBP. With `minAmountOut == 0` there is no
+    /// @notice F1 regression: a non-zero redemption cooldown makes `wsgem.redeem` defer payout, so a
+    ///         sell would burn the seller's wsgem for ~0 gem. With `minAmountOut == 0` there is no
     ///         slippage backstop, so the hook itself must revert (`RedeemUnderpaid`) for both
     ///         exact-in and exact-out sells; buys are unaffected, and the quoter flags it off-chain.
     function test_sellRevertsWhenRedeemCooldownActive() public {
@@ -224,20 +225,20 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         assertEq(reason, "exceeds capacity", "preview reason");
 
         vm.expectRevert();
-        _swapIn(true, 1_000 * WAD); // mints ~1000/mintcost wstGBP >> 100 headroom
+        _swapIn(true, 1_000 * WAD); // mints ~1000/mintcost wsgem >> 100 headroom
 
         assertGt(_swapIn(true, 50 * WAD), 0, "buy within the capacity headroom still works");
     }
 
-    /// @notice L-02 regression: an exact-output buy rounds the tGBP input UP, so `wrapper.mint` mints
-    ///         strictly more wstGBP than the requested `amountOut` whenever `mintcost < WAD`. The
+    /// @notice L-02 regression: an exact-output buy rounds the gem input UP, so `wrapper.mint` mints
+    ///         strictly more wsgem than the requested `amountOut` whenever `mintcost < WAD`. The
     ///         capacity preview must gate on that *minted* amount, not on the requested output — else it
     ///         reports `executable = true` at a tight capacity boundary while execution reverts in mint.
     ///         The live NAV is > par, so we drive it sub-par (pip price slot + zero ask spread) to
     ///         materialize the overshoot deterministically.
     function test_previewCapacityUsesMintedNotRequestedOutput() public {
         // Sub-par NAV with no ask spread => mintcost == nav < WAD, so the rounded-up exact-out input
-        // mints more wstGBP than requested.
+        // mints more wsgem than requested.
         vm.store(ACT, BPSIN_SLOT, bytes32(uint256(0)));
         vm.store(wrapper.pip(), PRICE_SLOT, bytes32(uint256(0.5e18)));
         uint256 mc = wrapper.mintcost();
@@ -268,11 +269,11 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     /// @notice I-02 regression: the hook caches the wrapper's immutable `act`/`pip` feed proxies at
     ///         construction and prices swaps directly off them (skipping the wrapper dispatch hop). Assert
     ///         the cached proxies equal the wrapper's and that the cached-feed prices equal the wrapper
-    ///         facade prices, so that optimization can never silently diverge from `wstGBP` itself.
+    ///         facade prices, so that optimization can never silently diverge from `wsgem` itself.
     function test_cachedFeedsMatchWrapper() public view {
         assertEq(address(hook.act()), wrapper.act(), "act proxy == wrapper.act()");
         assertEq(address(hook.pip()), wrapper.pip(), "pip proxy == wrapper.pip()");
-        IMaseerAct a = hook.act();
+        IAct a = hook.act();
         uint256 nav = hook.pip().read();
         assertEq(a.mintcost(nav), wrapper.mintcost(), "cached mintcost == facade");
         assertEq(a.burncost(nav), wrapper.burncost(), "cached burncost == facade");
@@ -281,12 +282,12 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
 
     /// @notice The quoter caches the wrapper's `act`/`pip` feed proxies (same optimization as the hook)
     ///         and prices off them directly. Assert the cached proxies equal the wrapper's and that the
-    ///         cached-feed prices equal the wrapper facade, so the quoter's quotes match `wstGBP` for the
+    ///         cached-feed prices equal the wrapper facade, so the quoter's quotes match `wsgem` for the
     ///         wrapper implementation under test.
     function test_quoterCachedFeedsMatchWrapper() public view {
         assertEq(address(quoter.act()), wrapper.act(), "act proxy == wrapper.act()");
         assertEq(address(quoter.pip()), wrapper.pip(), "pip proxy == wrapper.pip()");
-        IMaseerAct a = quoter.act();
+        IAct a = quoter.act();
         uint256 nav = quoter.pip().read();
         assertEq(a.mintcost(nav), wrapper.mintcost(), "cached mintcost == facade");
         assertEq(a.burncost(nav), wrapper.burncost(), "cached burncost == facade");
@@ -297,42 +298,42 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
 
     function testFuzz_buyExactInputMatchesQuoter(uint256 amtIn) public {
         amtIn = bound(amtIn, wrapper.mintcost(), 200_000 * WAD);
-        uint256 w0 = _bal(WST, address(this));
+        uint256 w0 = _bal(WSGEM, address(this));
         uint256 got = _swapIn(true, amtIn);
         assertEq(got, quoter.quoteExactInput(true, amtIn), "buy exact-in == quoter");
-        assertEq(_bal(WST, address(this)) - w0, got, "recipient received output");
+        assertEq(_bal(WSGEM, address(this)) - w0, got, "recipient received output");
         _assertHookClean();
     }
 
     function testFuzz_sellExactInputMatchesQuoter(uint256 amtIn) public {
         amtIn = bound(amtIn, WAD, 100_000 * WAD);
-        uint256 t0 = _bal(TGBP, address(this));
+        uint256 t0 = _bal(GEM, address(this));
         uint256 got = _swapIn(false, amtIn);
         assertEq(got, quoter.quoteExactInput(false, amtIn), "sell exact-in == quoter");
-        assertEq(_bal(TGBP, address(this)) - t0, got, "recipient received output");
+        assertEq(_bal(GEM, address(this)) - t0, got, "recipient received output");
         _assertHookClean();
     }
 
     function testFuzz_buyExactOutputMatchesQuoter(uint256 amtOut) public {
         amtOut = bound(amtOut, 2 * WAD, 100_000 * WAD);
         uint256 expectedIn = quoter.quoteExactOutput(true, amtOut);
-        uint256 w0 = _bal(WST, address(this));
+        uint256 w0 = _bal(WSGEM, address(this));
         uint256 spent = _swapOut(true, amtOut, expectedIn);
         assertEq(spent, expectedIn, "buy exact-out input == quoter");
-        assertEq(_bal(WST, address(this)) - w0, amtOut, "recipient received exact output");
-        assertLe(_bal(WST, address(hook)), 2, "hook keeps <= ~1 wei wstGBP dust");
-        assertEq(_bal(TGBP, address(hook)), 0, "hook holds no tGBP");
+        assertEq(_bal(WSGEM, address(this)) - w0, amtOut, "recipient received exact output");
+        assertLe(_bal(WSGEM, address(hook)), 2, "hook keeps <= ~1 wei wsgem dust");
+        assertEq(_bal(GEM, address(hook)), 0, "hook holds no gem");
     }
 
     function testFuzz_sellExactOutputMatchesQuoter(uint256 amtOut) public {
         amtOut = bound(amtOut, 2 * WAD, 50_000 * WAD);
         uint256 expectedIn = quoter.quoteExactOutput(false, amtOut);
-        uint256 t0 = _bal(TGBP, address(this));
+        uint256 t0 = _bal(GEM, address(this));
         uint256 spent = _swapOut(false, amtOut, expectedIn);
         assertEq(spent, expectedIn, "sell exact-out input == quoter");
-        assertEq(_bal(TGBP, address(this)) - t0, amtOut, "recipient received exact output");
-        assertLe(_bal(TGBP, address(hook)), 2, "hook keeps <= ~1 wei tGBP dust");
-        assertEq(_bal(WST, address(hook)), 0, "hook holds no wstGBP");
+        assertEq(_bal(GEM, address(this)) - t0, amtOut, "recipient received exact output");
+        assertLe(_bal(GEM, address(hook)), 2, "hook keeps <= ~1 wei gem dust");
+        assertEq(_bal(WSGEM, address(hook)), 0, "hook holds no wsgem");
     }
 
     // --- Router events (B3) ---
@@ -341,7 +342,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         uint256 amtIn = 1_000 * WAD;
         uint256 expectedOut = amtIn * WAD / wrapper.mintcost();
         vm.expectEmit(true, true, true, true, address(router));
-        emit WstGBPSwapRouter.Swap(address(this), address(this), key.toId(), true, amtIn, expectedOut);
+        emit WsgemSwapRouter.Swap(address(this), address(this), key.toId(), true, amtIn, expectedOut);
         router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp);
     }
 
@@ -352,20 +353,20 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         address alice = vm.addr(pk);
         uint256 amtIn = 1_000 * WAD;
         address permit2 = address(router.PERMIT2()); // resolve before pranking (it's an external call)
-        deal(TGBP, alice, amtIn);
+        deal(GEM, alice, amtIn);
         vm.prank(alice);
-        IERC20Minimal(TGBP).approve(permit2, type(uint256).max);
+        IERC20Minimal(GEM).approve(permit2, type(uint256).max);
 
         (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
-            _signPermit(pk, TGBP, amtIn, 0, block.timestamp + 1 hours);
+            _signPermit(pk, GEM, amtIn, 0, block.timestamp + 1 hours);
 
         uint256 expectedOut = amtIn * WAD / wrapper.mintcost();
         vm.prank(alice);
         uint256 out = router.swapExactInputPermit2(key, true, amtIn, expectedOut, alice, permit, sig);
 
         assertEq(out, expectedOut, "permit2 buy == backstop price");
-        assertEq(_bal(WST, alice), out, "alice received wstGBP");
-        assertEq(_bal(TGBP, alice), 0, "alice spent exact tGBP via permit2 (no router approval)");
+        assertEq(_bal(WSGEM, alice), out, "alice received wsgem");
+        assertEq(_bal(GEM, alice), 0, "alice spent exact gem via permit2 (no router approval)");
     }
 
     function test_permit2_sellExactOutput() public {
@@ -376,31 +377,31 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         uint256 expectedIn = _ceil(tOut * WAD, wrapper.burncost());
         uint256 maxIn = expectedIn + 5 * WAD;
         address permit2 = address(router.PERMIT2()); // resolve before pranking (it's an external call)
-        IERC20Minimal(WST).transfer(bob, maxIn); // fund bob from the test contract's wstGBP
+        IERC20Minimal(WSGEM).transfer(bob, maxIn); // fund bob from the test contract's wsgem
         vm.prank(bob);
-        IERC20Minimal(WST).approve(permit2, type(uint256).max);
+        IERC20Minimal(WSGEM).approve(permit2, type(uint256).max);
 
         (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
-            _signPermit(pk, WST, maxIn, 0, block.timestamp + 1 hours);
+            _signPermit(pk, WSGEM, maxIn, 0, block.timestamp + 1 hours);
 
-        uint256 w0 = _bal(WST, bob);
+        uint256 w0 = _bal(WSGEM, bob);
         vm.prank(bob);
         uint256 spent = router.swapExactOutputPermit2(key, false, tOut, maxIn, bob, permit, sig);
 
         assertEq(spent, expectedIn, "permit2 sell input == backstop price");
-        assertEq(_bal(TGBP, bob), tOut, "bob received exact tGBP");
-        assertEq(w0 - _bal(WST, bob), spent, "permit2 surplus refunded to bob");
+        assertEq(_bal(GEM, bob), tOut, "bob received exact gem");
+        assertEq(w0 - _bal(WSGEM, bob), spent, "permit2 surplus refunded to bob");
     }
 
     // --- Tiny exact-out reverts on the pure backstop (F3 / C7) ---
 
     function test_tinyExactOutputRevertsOnBackstop() public {
-        // Wrapper minimums are 1 wstGBP to mint / 1 to burn; a sub-1-unit exact-out can't be served and
+        // Wrapper minimums are 1 wsgem to mint / 1 to burn; a sub-1-unit exact-out can't be served and
         // the pure backstop has no LP to fall back to, so it reverts on the wrapper dust threshold.
         vm.expectRevert();
-        router.swapExactOutput(key, true, 0.5e18, 100 * WAD, address(this), block.timestamp); // buy < 1 wstGBP
+        router.swapExactOutput(key, true, 0.5e18, 100 * WAD, address(this), block.timestamp); // buy < 1 wsgem
         vm.expectRevert();
-        router.swapExactOutput(key, false, 0.5e18, 100 * WAD, address(this), block.timestamp); // sell, wIn < 1 wstGBP
+        router.swapExactOutput(key, false, 0.5e18, 100 * WAD, address(this), block.timestamp); // sell, wIn < 1 wsgem
     }
 
     // --- Red-team pass (2026-06-03) ---
@@ -419,13 +420,13 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         _assertOraclePaused(false, int256(1_000 * WAD)); // sell exact-out
     }
 
-    /// @notice M-01 (red-team): the wstGBP compliance gate (`cop.pass`, a permissive blacklist) is applied
+    /// @notice M-01 (red-team): the wsgem compliance gate (`cop.pass`, a permissive blacklist) is applied
     ///         to every mint/redeem/transfer. Banning the *hook* makes `wrapper.mint`/`redeem` revert, so
     ///         every swap reverts with no owner/recovery path — a third-party kill-switch over the whole
-    ///         pool. Banning the *PoolManager* also bricks buys: the hook settles wstGBP to the PM, and
-    ///         `wstGBP.transfer` gates the destination through `cop.pass`.
+    ///         pool. Banning the *PoolManager* also bricks buys: the hook settles wsgem to the PM, and
+    ///         `wsgem.transfer` gates the destination through `cop.pass`.
     function test_blacklistBricksPool() public {
-        address cop = IHasCop(WST).cop();
+        address cop = IHasCop(WSGEM).cop();
         assertGt(_swapIn(true, 100 * WAD), 0, "buy works before any ban");
 
         // Ban the hook => both directions revert (mint and redeem both gate on cop.pass(msg.sender=hook)).
@@ -436,7 +437,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         _swapIn(false, 1_000 * WAD);
         vm.clearMockedCalls();
 
-        // Ban the PoolManager => buys revert at the settle transfer (wstGBP.transfer to a banned dst).
+        // Ban the PoolManager => buys revert at the settle transfer (wsgem.transfer to a banned dst).
         vm.mockCall(cop, abi.encodeWithSignature("pass(address)", address(PM)), abi.encode(false));
         vm.expectRevert();
         _swapIn(true, 1_000 * WAD);
@@ -450,14 +451,14 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         uint256 amtIn = 1_000 * WAD;
         uint256 fairOut = quoter.quoteExactInput(true, amtIn);
 
-        // Move NAV up ~10% (adverse to a buyer: higher mintcost => less wstGBP out).
+        // Move NAV up ~10% (adverse to a buyer: higher mintcost => less wsgem out).
         uint256 nav0 = wrapper.navprice();
         vm.store(wrapper.pip(), PRICE_SLOT, bytes32(nav0 * 110 / 100));
         uint256 worseOut = quoter.quoteExactInput(true, amtIn);
         assertLt(worseOut, fairOut, "price moved adverse to the buyer");
 
         // Caller-enforced slippage DOES protect: demanding the pre-move output reverts at the router.
-        vm.expectRevert(abi.encodeWithSelector(WstGBPSwapRouter.InsufficientOutput.selector, worseOut, fairOut));
+        vm.expectRevert(abi.encodeWithSelector(WsgemSwapRouter.InsufficientOutput.selector, worseOut, fairOut));
         router.swapExactInput(key, true, amtIn, fairOut, address(this), block.timestamp);
 
         // The hook itself applies NONE: `minAmountOut == 0` executes at the worse live price.
@@ -469,7 +470,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     /// @notice I-04 (red-team): the hook's callbacks are gated by `onlyPoolManager`, so nothing — including
     ///         a hostile token mid-mint/redeem — can re-enter `beforeSwap`/`beforeAddLiquidity` directly;
     ///         only the PoolManager can drive them. (A hostile-token reentrancy harness was judged
-    ///         disproportionate: the real tGBP/wstGBP have no transfer callback, and the actual protections
+    ///         disproportionate: the real gem/wsgem have no transfer callback, and the actual protections
     ///         are this access-control guard plus the zero-net delta accounting the other tests assert.)
     function test_hookCallbacksRejectNonPoolManager() public {
         vm.expectRevert(BaseHook.NotPoolManager.selector);
@@ -493,20 +494,20 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
 
     // --- Coverage: pool guard, defensive reverts, and the full preview branch matrix ---
 
-    /// @notice The hook serves only the canonical tGBP/wstGBP pool; a swap on any *other* pool that
+    /// @notice The hook serves only the canonical gem/wsgem pool; a swap on any *other* pool that
     ///         shares this hook reverts `PoolNotSupported` in `beforeSwap` before touching the wrapper.
-    /// @dev The "wrong" currency is a real (code-bearing) token paired with wstGBP so PoolSwapTest's
+    /// @dev The "wrong" currency is a real (code-bearing) token paired with wsgem so PoolSwapTest's
     ///      balance snapshot doesn't revert before the swap reaches the hook. Whatever the sort order,
-    ///      currency0 is never tGBP, so the hook rejects the pool.
+    ///      currency0 is never gem, so the hook rejects the pool.
     function test_swapRevertsOnUnsupportedPool() public {
         MinimalToken other = new MinimalToken();
-        (Currency c0, Currency c1) = address(other) < WST
-            ? (Currency.wrap(address(other)), Currency.wrap(WST))
-            : (Currency.wrap(WST), Currency.wrap(address(other)));
+        (Currency c0, Currency c1) = address(other) < WSGEM
+            ? (Currency.wrap(address(other)), Currency.wrap(WSGEM))
+            : (Currency.wrap(WSGEM), Currency.wrap(address(other)));
         PoolKey memory wrongKey =
             PoolKey({currency0: c0, currency1: c1, fee: 0, tickSpacing: 1, hooks: IHooks(address(hook))});
         PM.initialize(wrongKey, 79228162514264337593543950336);
-        vm.expectRevert(); // WstGBPBackstopHook.PoolNotSupported, bubbled up through the PoolManager
+        vm.expectRevert(); // WsgemBackstopHook.PoolNotSupported, bubbled up through the PoolManager
         swapFirstRouter.swap(
             wrongKey,
             SwapParams({
@@ -517,24 +518,56 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         );
     }
 
-    /// @notice The hook constructor enforces currency0 (tGBP) < currency1 (wstGBP); a wrapper whose
-    ///         `gem()` sorts above its own address trips `BadCurrencyOrdering`.
-    function test_constructorRejectsBadCurrencyOrdering() public {
-        BadOrderWrapper bad = new BadOrderWrapper();
+    /// @notice The real tGBP/wstGBP pair has gem (0x27f6…) below wsgem (0x57C3…), so the live hook reports
+    ///         `gemIsZero == true` and currency0 == gem.
+    function test_orderingMatchesRealPair() public view {
+        assertTrue(hook.gemIsZero(), "gem is currency0 for the real pair");
+        assertEq(Currency.unwrap(hook.currency0()), GEM, "currency0 == gem");
+        assertEq(Currency.unwrap(hook.currency1()), WSGEM, "currency1 == wsgem");
+        assertEq(Currency.unwrap(hook.gemCurrency()), GEM, "gemCurrency == gem");
+        assertEq(Currency.unwrap(hook.wsgemCurrency()), WSGEM, "wsgemCurrency == wsgem");
+    }
+
+    /// @notice The constructor adapts to EITHER address ordering instead of rejecting one: with a wrapper
+    ///         whose `gem()` sorts ABOVE its own address, the hook records `gemIsZero == false`, sorts the
+    ///         pool currencies (wsgem = currency0, gem = currency1), and still binds the role-based
+    ///         `gemCurrency`/`wsgemCurrency` correctly. This is the flipped-ordering case the real pair
+    ///         never exercises. (`FlippedOrderWrapper.gem()` returns the max address; we etch a code-bearing
+    ///         token there so the constructor's one-time `approve` succeeds.)
+    function test_flippedOrdering_constructorAdapts() public {
+        FlippedOrderWrapper flipped = new FlippedOrderWrapper();
+        address gemHi = flipped.gem(); // == address(type(uint160).max), sorts above the wrapper
+        vm.etch(gemHi, address(new MinimalToken()).code); // code-bearing gem so `approve` returns true
+
         uint160 flags =
             uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
-        bytes memory args = abi.encode(PM, IwstGBP(address(bad)));
-        (, bytes32 salt) = HookMiner.find(address(this), flags, type(WstGBPBackstopHook).creationCode, args);
-        vm.expectRevert(WstGBPBackstopHook.BadCurrencyOrdering.selector);
-        new WstGBPBackstopHook{salt: salt}(PM, IwstGBP(address(bad)));
+        bytes memory args = abi.encode(PM, Iwsgem(address(flipped)));
+        (address predicted, bytes32 salt) =
+            HookMiner.find(address(this), flags, type(WsgemBackstopHook).creationCode, args);
+        WsgemBackstopHook flippedHook = new WsgemBackstopHook{salt: salt}(PM, Iwsgem(address(flipped)));
+        assertEq(address(flippedHook), predicted, "mined address");
+
+        assertFalse(flippedHook.gemIsZero(), "gem sorts above wsgem => gemIsZero false");
+        assertEq(Currency.unwrap(flippedHook.currency0()), address(flipped), "currency0 == wsgem (lower)");
+        assertEq(Currency.unwrap(flippedHook.currency1()), gemHi, "currency1 == gem (higher)");
+        assertEq(Currency.unwrap(flippedHook.gemCurrency()), gemHi, "gemCurrency == gem");
+        assertEq(Currency.unwrap(flippedHook.wsgemCurrency()), address(flipped), "wsgemCurrency == wsgem");
+    }
+
+    /// @notice The quoter rejects a wrapper that names itself as its own underlying (`gem() == wrapper`),
+    ///         which would make `gemIsZero`/direction ambiguous — mirroring the hook and adapter guards.
+    function test_quoterRejectsIdenticalCurrencies() public {
+        SelfGemWrapper bad = new SelfGemWrapper();
+        vm.expectRevert(WsgemQuoter.IdenticalCurrencies.selector);
+        new WsgemQuoter(Iwsgem(address(bad)));
     }
 
     /// @notice Defensive guard: if the wrapper's redeem ever pays out less than the funded claim (e.g. a
     ///         mid-call cooldown change), the hook reverts `RedeemUnderpaid` for both sell directions
     ///         rather than settle the seller short. Forced here by mocking redeem to a no-op (it returns
-    ///         an id but moves no tGBP) while the wrapper stays funded, so the balance diff measures 0.
+    ///         an id but moves no gem) while the wrapper stays funded, so the balance diff measures 0.
     function test_sellRevertsWhenRedeemUnderpays() public {
-        vm.mockCall(WST, abi.encodeWithSelector(IwstGBP.redeem.selector), abi.encode(uint256(1)));
+        vm.mockCall(WSGEM, abi.encodeWithSelector(Iwsgem.redeem.selector), abi.encode(uint256(1)));
         vm.expectRevert(); // RedeemUnderpaid (exact-in), bubbled up through the PoolManager
         _swapIn(false, 1_000 * WAD);
         vm.expectRevert(); // RedeemUnderpaid (exact-out)
@@ -543,19 +576,19 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     }
 
     /// @notice Defensive guard: if settling the output token to the PoolManager fails, the hook reverts
-    ///         `TransferFailed`. Forced by mocking the wstGBP `transfer` (the buy's settle leg) to return
+    ///         `TransferFailed`. Forced by mocking the wsgem `transfer` (the buy's settle leg) to return
     ///         false; `wrapper.mint` is unaffected (it mints via internal accounting, not `transfer`).
     function test_settleRevertsWhenTokenTransferFails() public {
-        vm.mockCall(WST, abi.encodeWithSelector(IERC20Minimal.transfer.selector), abi.encode(false));
-        vm.expectRevert(); // WstGBPBackstopHook.TransferFailed, bubbled up through the PoolManager
+        vm.mockCall(WSGEM, abi.encodeWithSelector(IERC20Minimal.transfer.selector), abi.encode(false));
+        vm.expectRevert(); // WsgemBackstopHook.TransferFailed, bubbled up through the PoolManager
         _swapIn(true, 1_000 * WAD);
         vm.clearMockedCalls();
     }
 
     /// @notice Defensive guard: non-standard ERC20s that return malformed transfer data are rejected.
     function test_settleRevertsWhenTokenTransferReturnsMalformedData() public {
-        vm.mockCall(WST, abi.encodeWithSelector(IERC20Minimal.transfer.selector), abi.encode(bytes32(0), bytes32(0)));
-        vm.expectRevert(); // WstGBPBackstopHook.TransferFailed, bubbled up through the PoolManager
+        vm.mockCall(WSGEM, abi.encodeWithSelector(IERC20Minimal.transfer.selector), abi.encode(bytes32(0), bytes32(0)));
+        vm.expectRevert(); // WsgemBackstopHook.TransferFailed, bubbled up through the PoolManager
         _swapIn(true, 1_000 * WAD);
         vm.clearMockedCalls();
     }
@@ -579,7 +612,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
 
     /// @notice `unlockCallback` is callable only by the PoolManager.
     function test_routerUnlockCallbackRejectsNonPoolManager() public {
-        vm.expectRevert(WstGBPSwapRouter.NotPoolManager.selector);
+        vm.expectRevert(WsgemSwapRouter.NotPoolManager.selector);
         router.unlockCallback("");
     }
 
@@ -589,11 +622,11 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
         uint256 pk = 0xA11CE;
         address alice = vm.addr(pk);
         uint256 amtIn = 1_000 * WAD;
-        // Buy => input currency is tGBP; sign a permit over wstGBP instead.
+        // Buy => input currency is gem; sign a permit over wsgem instead.
         (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
-            _signPermit(pk, WST, amtIn, 0, block.timestamp + 1 hours);
+            _signPermit(pk, WSGEM, amtIn, 0, block.timestamp + 1 hours);
         vm.prank(alice);
-        vm.expectRevert(WstGBPSwapRouter.Permit2TokenMismatch.selector);
+        vm.expectRevert(WsgemSwapRouter.Permit2TokenMismatch.selector);
         router.swapExactInputPermit2(key, true, amtIn, 0, alice, permit, sig);
     }
 
@@ -601,9 +634,9 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     ///         (the input `transferFrom` fails).
     function test_routerRevertsWhenTransferFromFails() public {
         address carol = address(0xCA401); // funded but has NOT approved the router
-        deal(TGBP, carol, 1_000 * WAD);
+        deal(GEM, carol, 1_000 * WAD);
         vm.prank(carol);
-        vm.expectRevert(WstGBPSwapRouter.TransferFailed.selector);
+        vm.expectRevert(WsgemSwapRouter.TransferFailed.selector);
         router.swapExactInput(key, true, 1_000 * WAD, 0, carol, block.timestamp);
     }
 
@@ -624,7 +657,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     }
 
     function test_previewSellBelowRedeemMinimum() public view {
-        // < 1 wstGBP can't be redeemed (wrapper minimum is 1e18).
+        // < 1 wsgem can't be redeemed (wrapper minimum is 1e18).
         (,, bool ok, string memory r) = quoter.previewSwap(false, -int256(0.5e18));
         assertFalse(ok);
         assertEq(r, "below redeem minimum");
@@ -639,7 +672,7 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     }
 
     function test_previewSellUnderfunded() public {
-        deal(TGBP, WST, 1 * WAD); // drain the wrapper's tGBP below the claim
+        deal(GEM, WSGEM, 1 * WAD); // drain the wrapper's gem below the claim
         (,, bool ok, string memory r) = quoter.previewSwap(false, -int256(1_000 * WAD));
         assertFalse(ok);
         assertEq(r, "wrapper underfunded");
@@ -657,10 +690,11 @@ contract WstGBPBackstopHookForkTest is WstGBPForkBase {
     }
 }
 
-/// @dev Minimal wrapper stub whose underlying `gem()` (tGBP) address sorts ABOVE its own (wstGBP)
-///      address, used solely to exercise the hook constructor's `BadCurrencyOrdering` guard. The
-///      constructor reads `gem()/act()/pip()` then reverts on the ordering check before anything else.
-contract BadOrderWrapper {
+/// @dev Minimal wrapper stub whose underlying `gem()` address sorts ABOVE its own (wsgem) address, used to
+///      exercise the hook constructor's flipped-ordering path (gem = currency1). `gem()` returns the max
+///      address so it is guaranteed to sort above the wrapper's own (any) deployed address; the test etches
+///      a code-bearing token there so the constructor's one-time `approve` succeeds.
+contract FlippedOrderWrapper {
     function gem() external pure returns (address) {
         return address(type(uint160).max);
     }
@@ -671,6 +705,14 @@ contract BadOrderWrapper {
 
     function pip() external pure returns (address) {
         return address(0xB1B);
+    }
+}
+
+/// @dev Wrapper stub whose `gem()` returns its own address — the degenerate same-currency case. Only `gem()`
+///      is read before the quoter's `IdenticalCurrencies` guard fires, so nothing else is implemented.
+contract SelfGemWrapper {
+    function gem() external view returns (address) {
+        return address(this);
     }
 }
 
@@ -694,8 +736,8 @@ contract MinimalToken {
     }
 }
 
-contract SafeTransferHarness is WstGBPBackstopHook {
-    constructor(IPoolManager pm, IwstGBP w) WstGBPBackstopHook(pm, w) {}
+contract SafeTransferHarness is WsgemBackstopHook {
+    constructor(IPoolManager pm, Iwsgem w) WsgemBackstopHook(pm, w) {}
 
     function exposedSafeTransfer(address token, address to, uint256 amount) external {
         _safeTransfer(token, to, amount);

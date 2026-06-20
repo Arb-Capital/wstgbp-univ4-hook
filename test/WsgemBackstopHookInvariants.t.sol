@@ -9,11 +9,11 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 
-import {WstGBPForkBase} from "./base/WstGBPForkBase.sol";
-import {WstGBPBackstopHook} from "../src/v4/WstGBPBackstopHook.sol";
-import {WstGBPSwapRouter} from "../src/v4/periphery/WstGBPSwapRouter.sol";
-import {WstGBPQuoter} from "../src/v4/periphery/WstGBPQuoter.sol";
-import {IwstGBP} from "../src/core/interfaces/IwstGBP.sol";
+import {WsgemForkBase} from "./base/WsgemForkBase.sol";
+import {WsgemBackstopHook} from "../src/v4/WsgemBackstopHook.sol";
+import {WsgemSwapRouter} from "../src/v4/periphery/WsgemSwapRouter.sol";
+import {WsgemQuoter} from "../src/v4/periphery/WsgemQuoter.sol";
+import {Iwsgem} from "../src/core/interfaces/Iwsgem.sol";
 
 /// @notice Stateful (invariant) suite for the pure-backstop hook. A `Handler` drives long, randomly
 ///         interleaved sequences of the four swap modes through the settle-first router, and the
@@ -37,7 +37,7 @@ import {IwstGBP} from "../src/core/interfaces/IwstGBP.sol";
 ///      *inside* a handler is itself a revert (which would be swallowed), the handler NEVER asserts: it
 ///      records any quoter/execution mismatch into a ghost counter, and `invariant_quoterMatchesExecution`
 ///      surfaces it. So no real property violation can be masked by the lenient revert handling.
-contract WstGBPBackstopHookInvariants is WstGBPForkBase {
+contract WsgemBackstopHookInvariants is WsgemForkBase {
     using StateLibrary for IPoolManager;
     using PoolIdLibrary for PoolKey;
 
@@ -48,15 +48,15 @@ contract WstGBPBackstopHookInvariants is WstGBPForkBase {
     function setUp() public override {
         super.setUp();
 
-        // Over-fund the wrapper's tGBP reserves so the sell path is never underfunded, regardless of the
+        // Over-fund the wrapper's gem reserves so the sell path is never underfunded, regardless of the
         // random sequence — we want to exercise the math, not the (separately tested) funding guard.
-        deal(TGBP, WST, 50_000_000 * WAD);
+        deal(GEM, WSGEM, 50_000_000 * WAD);
 
-        handler = new Handler(router, quoter, hook, wrapper, key, TGBP, WST);
+        handler = new Handler(router, quoter, hook, wrapper, key, GEM, WSGEM);
 
-        // Endow the actor (the handler): plenty of tGBP, plus a slice of the wstGBP minted in base setUp.
-        deal(TGBP, address(handler), 5_000_000 * WAD);
-        IERC20Minimal(WST).transfer(address(handler), 200_000 * WAD);
+        // Endow the actor (the handler): plenty of gem, plus a slice of the wsgem minted in base setUp.
+        deal(GEM, address(handler), 5_000_000 * WAD);
+        IERC20Minimal(WSGEM).transfer(address(handler), 200_000 * WAD);
 
         navAtStart = wrapper.navprice();
         initialActorValue = _actorValue();
@@ -72,10 +72,10 @@ contract WstGBPBackstopHookInvariants is WstGBPForkBase {
         targetContract(address(handler));
     }
 
-    /// @dev Actor's whole position valued in tGBP at the (constant) start NAV.
+    /// @dev Actor's whole position valued in gem at the (constant) start NAV.
     function _actorValue() internal view returns (uint256) {
-        uint256 t = IERC20Minimal(TGBP).balanceOf(address(handler));
-        uint256 w = IERC20Minimal(WST).balanceOf(address(handler));
+        uint256 t = IERC20Minimal(GEM).balanceOf(address(handler));
+        uint256 w = IERC20Minimal(WSGEM).balanceOf(address(handler));
         return t + FullMath.mulDiv(w, navAtStart, WAD);
     }
 
@@ -88,11 +88,11 @@ contract WstGBPBackstopHookInvariants is WstGBPForkBase {
     }
 
     /// @notice The ownerless hook is never net-drained; it only ever accrues <= 1 wei of exact-out dust
-    ///         per exact-out swap (buys leave wstGBP dust, sells leave tGBP dust). It never pays out from
+    ///         per exact-out swap (buys leave wsgem dust, sells leave gem dust). It never pays out from
     ///         its own balance, so an attacker can neither drain it nor subsidize pricing into it.
     function invariant_hookHoldsOnlyBoundedDust() public view {
-        assertLe(IERC20Minimal(WST).balanceOf(address(hook)), handler.exactOutBuys(), "wstGBP dust exceeds bound");
-        assertLe(IERC20Minimal(TGBP).balanceOf(address(hook)), handler.exactOutSells(), "tGBP dust exceeds bound");
+        assertLe(IERC20Minimal(WSGEM).balanceOf(address(hook)), handler.exactOutBuys(), "wsgem dust exceeds bound");
+        assertLe(IERC20Minimal(GEM).balanceOf(address(hook)), handler.exactOutSells(), "gem dust exceeds bound");
     }
 
     /// @notice The quoter matched execution on every swap in the sequence (recorded by the handler).
@@ -112,13 +112,13 @@ contract WstGBPBackstopHookInvariants is WstGBPForkBase {
 ///         actor's tokens and is the sole `targetContract`. Never asserts (see suite note); records
 ///         mismatches into `parityFailures` for an invariant to surface.
 contract Handler is Test {
-    WstGBPSwapRouter internal immutable router;
-    WstGBPQuoter internal immutable quoter;
-    WstGBPBackstopHook internal immutable hook;
-    IwstGBP internal immutable wrapper;
+    WsgemSwapRouter internal immutable router;
+    WsgemQuoter internal immutable quoter;
+    WsgemBackstopHook internal immutable hook;
+    Iwsgem internal immutable wrapper;
     PoolKey internal key;
-    address internal immutable tgbp;
-    address internal immutable wst;
+    address internal immutable gem;
+    address internal immutable wsgem;
 
     uint256 internal constant WAD = 1e18;
     uint256 internal constant MAX_AMT = 100_000 * 1e18; // per-swap cap, well within the actor's endowment
@@ -130,29 +130,29 @@ contract Handler is Test {
     uint256 public totalSwaps;
 
     constructor(
-        WstGBPSwapRouter _router,
-        WstGBPQuoter _quoter,
-        WstGBPBackstopHook _hook,
-        IwstGBP _wrapper,
+        WsgemSwapRouter _router,
+        WsgemQuoter _quoter,
+        WsgemBackstopHook _hook,
+        Iwsgem _wrapper,
         PoolKey memory _key,
-        address _tgbp,
-        address _wst
+        address _gem,
+        address _wsgem
     ) {
         router = _router;
         quoter = _quoter;
         hook = _hook;
         wrapper = _wrapper;
         key = _key;
-        tgbp = _tgbp;
-        wst = _wst;
+        gem = _gem;
+        wsgem = _wsgem;
         // One-time approvals (setup-only; not a fuzzable action). `approve` needs no balance.
-        IERC20Minimal(_tgbp).approve(address(_router), type(uint256).max);
-        IERC20Minimal(_wst).approve(address(_router), type(uint256).max);
+        IERC20Minimal(_gem).approve(address(_router), type(uint256).max);
+        IERC20Minimal(_wsgem).approve(address(_router), type(uint256).max);
     }
 
     function buyExactIn(uint256 amt) public {
         uint256 mc = wrapper.mintcost();
-        uint256 bal = IERC20Minimal(tgbp).balanceOf(address(this));
+        uint256 bal = IERC20Minimal(gem).balanceOf(address(this));
         if (bal < mc + 2) return; // need to clear the wrapper's dust floor (amt >= mintcost)
         amt = bound(amt, mc + 1, _min(bal, MAX_AMT));
         uint256 q = quoter.quoteExactInput(true, amt);
@@ -162,8 +162,8 @@ contract Handler is Test {
     }
 
     function sellExactIn(uint256 amt) public {
-        uint256 bal = IERC20Minimal(wst).balanceOf(address(this));
-        if (bal < WAD) return; // wrapper redeem minimum is 1 wstGBP
+        uint256 bal = IERC20Minimal(wsgem).balanceOf(address(this));
+        if (bal < WAD) return; // wrapper redeem minimum is 1 wsgem
         amt = bound(amt, WAD, _min(bal, MAX_AMT));
         uint256 q = quoter.quoteExactInput(false, amt);
         uint256 out = router.swapExactInput(key, false, amt, 0, address(this), block.timestamp);
@@ -172,7 +172,7 @@ contract Handler is Test {
     }
 
     function buyExactOut(uint256 amtOut) public {
-        uint256 bal = IERC20Minimal(tgbp).balanceOf(address(this));
+        uint256 bal = IERC20Minimal(gem).balanceOf(address(this));
         amtOut = bound(amtOut, WAD, MAX_AMT);
         uint256 q = quoter.quoteExactOutput(true, amtOut);
         if (q == 0 || q > bal) return;
@@ -183,7 +183,7 @@ contract Handler is Test {
     }
 
     function sellExactOut(uint256 amtOut) public {
-        uint256 bal = IERC20Minimal(wst).balanceOf(address(this));
+        uint256 bal = IERC20Minimal(wsgem).balanceOf(address(this));
         amtOut = bound(amtOut, WAD, MAX_AMT);
         uint256 wIn = quoter.quoteExactOutput(false, amtOut);
         if (wIn < WAD || wIn > bal) return; // redeem minimum + actor balance

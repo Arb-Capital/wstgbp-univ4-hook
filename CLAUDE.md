@@ -11,7 +11,7 @@ protocol's own oracle prices:
 - `burncost` sits ~25bps below `mintcost`; that spread is the bid/ask and is captured by the wstGBP
   protocol itself, **not** this hook (no extra hook fee). Both prices ratchet up as NAV accrues.
 
-Status: **`WstGBPBackstopHook` is the single hook in scope** (fork-tested) — pure backstop, LP blocked.
+Status: **`WsgemBackstopHook` is the single hook in scope** (fork-tested) — pure backstop, LP blocked.
 Buys at `mintcost`, sells at `burncost`, infinite depth via wstGBP mint/redeem. It is ownerless, holds
 no capital, and ships with the settle-first router + backstop quoter.
 
@@ -29,9 +29,9 @@ Audit scope is in **[`AUDIT_SCOPE.md`](AUDIT_SCOPE.md)**; the durable backlog in
 | Thing | Address |
 |---|---|
 | tGBP (currency0) | `0x27f6c8289550fCE67f6B50BeD1F519966aFE5287` (proxy; impl `0x94321D80d3C5cdaC63B75F723AE64Ca7F94bE547`) |
-| wstGBP / MaseerOne (currency1) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` |
-| MaseerGate `act` (market timing/fees) | `0xB59cB4d3075a8ce5013C78e8Bd7aDA3Fd1300f7f` |
-| MaseerGuardOZ `cop` (compliance) | `0x794cF5948444b14105587455EbE96Caace036d52` |
+| wstGBP (the wrapper, currency1) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` |
+| `act` feed (market timing/fees) | `0xB59cB4d3075a8ce5013C78e8Bd7aDA3Fd1300f7f` |
+| compliance guard `cop` (`!isBanned`) | `0x794cF5948444b14105587455EbE96Caace036d52` |
 | v4 PoolManager | `0x000000000004444c5dc75cB358380D2e3dE08A90` |
 | v4 PositionManager / Quoter / StateView | `0xbd21…ee9e` / `0x52f0…1203` / `0x7ffe…7227` |
 
@@ -51,7 +51,7 @@ all prices are WAD (1e18) tGBP-per-wstGBP.
   current tGBP balance** (can underpay), and it **returns the redemption id, not the tGBP amount**
   (measure tGBP received by balance diff). Reverts if `!burnable()` or `amtWstIn < 1e18`.
 - `mintcost()` / `burncost()` / `navprice()` — WAD prices; live from the oracle, ratchet weekly.
-- `mintable()/burnable()` are **time-gated** by governance slots in MaseerGate (`block.timestamp`
+- `mintable()/burnable()` are **time-gated** by governance slots in the `act` feed (`block.timestamp`
   between open/halt). `capacity()` caps total wstGBP supply. `cooldown()` is 0 on this deployment.
 - **Compliance is a blacklist, permissive by default.** Every `mint`/`redeem`/`transfer`/
   `transferFrom`/`approve` is gated by `cop.pass(party) == !isBanned(party)`. So the hook,
@@ -63,17 +63,17 @@ all prices are WAD (1e18) tGBP-per-wstGBP.
 
 As of 2026-06-12 the repo holds **two swap venues** over the same wstGBP `mint`/`redeem`, sharing one core:
 
-- **`src/core/`** — venue-agnostic shared code. `WstGBPWrap.sol` (the lockstep-critical library: `price`,
+- **`src/core/`** — venue-agnostic shared code. `WsgemWrap.sol` (the lockstep-critical library: `price`,
   `quoteIn`/`quoteOut` exact rounding, `redeem` balance-diff safety, non-standard-ERC20 `transfer` — all
-  `internal`, embedded into each venue), plus `interfaces/IwstGBP.sol` and `interfaces/IMaseerFeeds.sol`.
-- **`src/v4/`** — the Uniswap v4 venue: `WstGBPBackstopHook.sol`, `base/BaseHook.sol` (vendored),
-  `periphery/WstGBPSwapRouter.sol` (settle-first router), `periphery/WstGBPQuoter.sol`. The hook's helper
-  bodies delegate to `WstGBPWrap`; `_beforeSwap` is unchanged.
-- **`src/adapter/`** — the non-v4 venue: `WstGBPDirectAdapter.sol`, a standalone ownerless `approve → swap`
+  `internal`, embedded into each venue), plus `interfaces/Iwsgem.sol` and `interfaces/IFeeds.sol`.
+- **`src/v4/`** — the Uniswap v4 venue: `WsgemBackstopHook.sol`, `base/BaseHook.sol` (vendored),
+  `periphery/WsgemSwapRouter.sol` (settle-first router), `periphery/WsgemQuoter.sol`. The hook's helper
+  bodies delegate to `WsgemWrap`; `_beforeSwap` is unchanged.
+- **`src/adapter/`** — the non-v4 venue: `WsgemDirectAdapter.sol`, a standalone ownerless `approve → swap`
   contract that calls `wstGBP.mint`/`redeem` **directly** (no pool, no mined flags) for DEX aggregators
   (Odos / LI.FI / Paraswap) and CoW Protocol solvers. Standard swap-then-settle semantics, exact-in/out +
   Permit2 + view quotes, direction inferred from `tokenIn`. Same rounding/redeem-safety/funding/cooldown
-  guards as the hook (via `WstGBPWrap`); cross-venue parity tests pin adapter == quoter == hook math.
+  guards as the hook (via `WsgemWrap`); cross-venue parity tests pin adapter == quoter == hook math.
 
 **Why an adapter and not "a CoW hook":** CoW Hooks are user-attached pre/post *interactions* on an order,
 **not** a liquidity source solvers route through. To give solvers a route you expose a normal swap contract
@@ -84,12 +84,12 @@ the same standard `approve → swap` adapter also satisfies Odos/LI.FI/Paraswap.
 
 ## The hook design (the important part)
 
-Files (v4 venue): `src/v4/WstGBPBackstopHook.sol` (the hook), `src/v4/base/BaseHook.sol` (vendored base),
-`src/core/interfaces/IwstGBP.sol`, `src/core/interfaces/IMaseerFeeds.sol` (the wrapper's cached price feeds),
-`src/v4/periphery/WstGBPSwapRouter.sol` (settle-first router), `src/v4/periphery/WstGBPQuoter.sol` (quoter),
-`src/core/WstGBPWrap.sol` (shared math/redeem core).
+Files (v4 venue): `src/v4/WsgemBackstopHook.sol` (the hook), `src/v4/base/BaseHook.sol` (vendored base),
+`src/core/interfaces/Iwsgem.sol`, `src/core/interfaces/IFeeds.sol` (the wrapper's cached price feeds),
+`src/v4/periphery/WsgemSwapRouter.sol` (settle-first router), `src/v4/periphery/WsgemQuoter.sol` (quoter),
+`src/core/WsgemWrap.sol` (shared math/redeem core).
 
-`WstGBPBackstopHook` is a **return-delta custom-curve hook**. Its **backstop** core: `beforeSwap`
+`WsgemBackstopHook` is a **return-delta custom-curve hook**. Its **backstop** core: `beforeSwap`
 returns a `BeforeSwapDelta` whose specified leg cancels the swap (AMM bypassed), `take`s the input from
 the PoolManager, calls `wstGBP.mint`/`redeem`, and `settle`s the output — wrapping the swap's own tokens
 at `mintcost` (buys) / `burncost` (sells), read live each swap, exact-in and exact-out. It blocks LP
@@ -108,7 +108,7 @@ be in the PoolManager when the hook runs: swaps must be **settle-first** (pay th
 The hook holds **no capital and has no owner** — it simply `take`s the input the router pre-paid,
 wraps/unwraps it via the wrapper, and settles the output.
 
-- **Use `src/v4/periphery/WstGBPSwapRouter.sol`** (or any settle-first solver/aggregator integration):
+- **Use `src/v4/periphery/WsgemSwapRouter.sol`** (or any settle-first solver/aggregator integration):
   it settles the input, swaps, and refunds unused input (exact-output uses a `maxAmountIn` bound).
   Depth is bounded only by `capacity()` (buys) and the wrapper's own tGBP reserves (sells).
 - **Stock "swap-then-settle" routers are not supported** — they pay input *after* `swap()` returns,
@@ -139,7 +139,7 @@ after the AMM, or the whole swap when there's no LP) settles per case:
 
 Flag bits encode the permissions, so the address must be **mined** (CREATE2). Backstop:
 `beforeSwap` + `beforeSwapReturnDelta` + `beforeAddLiquidity` (revert) = **`0x888`**, pool fee 0 /
-tickSpacing 1. `script/DeployHook.s.sol` mines + deploys the hook plus the router + quoter, and asserts
+tickSpacing 1. `script/DeployWstGBP.s.sol` mines + deploys the hook plus the router + quoter, and asserts
 the hook's cached `act`/`pip` feed proxies match the wrapper's (I-02). The hook is ownerless and holds
 no capital. Ensure the hook address is not on the tGBP ban list.
 
@@ -154,12 +154,12 @@ this pool (LP is blocked, so there is no AMM leg to blend). The stock v4 `Quoter
   - sell exact-in: `tGBP_out = wstGBP_in * burncost / 1e18`
   - buy exact-out: `tGBP_in = ceil(wstGBP_out * mintcost / 1e18)`
   - sell exact-out: `wstGBP_in = ceil(tGBP_out * 1e18 / burncost)`
-- **On-chain backstop quoter** `src/v4/periphery/WstGBPQuoter.sol` — `quoteExactInput`/`quoteExactOutput`
+- **On-chain backstop quoter** `src/v4/periphery/WsgemQuoter.sol` — `quoteExactInput`/`quoteExactOutput`
   return the exact backstop price, and `previewSwap(zeroForOne, amountSpecified)` also returns
   `(executable, reason)` (checks market open, dust thresholds, buy capacity, sell funding, redeem
   cooldown).
 
-Execute via `src/v4/periphery/WstGBPSwapRouter.sol` (settle-first):
+Execute via `src/v4/periphery/WsgemSwapRouter.sol` (settle-first):
 `swapExactInput(key, zeroForOne, amountIn, minAmountOut, recipient, deadline)` and
 `swapExactOutput(key, zeroForOne, amountOut, maxAmountIn, recipient, deadline)`. Quotes are
 point-in-time (the oracle ratchets up), so always pass real slippage bounds. `recipient == address(0)`
@@ -186,30 +186,35 @@ ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy   # broadcast + -
 ```
 
 Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canonical PoolManager; the
-hook is mined+deployed on the fork. The MaseerGate is forced open via
+hook is mined+deployed on the fork. The market gate (`act`) is forced open via
 `vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. The shared fork
 scaffolding (mine/deploy/init/seed, slot constants, swap/quote/sign helpers, plus `_setNav`/`_setSpreads`
-for driving the oracle) lives in `test/base/WstGBPForkBase.sol`; all three suites inherit it. 63 tests
-across three suites:
-- `test/WstGBPBackstopHook.t.sol` (48) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
+for driving the oracle) lives in the concrete `test/base/WstGBPFixture.sol` (over the generic `ForkBase`),
+reached by the three v4 suites via `WsgemForkBase`. 65 tests across three suites (plus a standalone
+flipped-ordering e2e suite, below):
+- `test/WsgemBackstopHook.t.sol` (50) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
   round-trip, quoter == execution (4 modes + fuzz), `previewSwap` flags, router hardening (minOut /
   maxIn / deadline / recipient / surplus refund, Permit2), LP-add revert, market-closed + underfunded
   + cooldown + capacity reverts, swap-first routing reverting, **L-02** capacity-uses-minted-amount,
   **I-02** cached-feed-proxies-match-wrapper for both the hook (`test_cachedFeedsMatchWrapper`) and the
   quoter (`test_quoterCachedFeedsMatchWrapper`), red-team regressions, and defensive coverage for pool
   guards, redeem/transfer failures, router auth, and preview branches.
-- `test/WstGBPBackstopHookFuzz.t.sol` (11) — adversarial math/attack-vector fuzz: quoter == execution
+- `test/WsgemBackstopHookFuzz.t.sol` (11) — adversarial math/attack-vector fuzz: quoter == execution
   for all four modes across the **whole** oracle price range (NAV driven 0.01–100 WAD via `vm.store`),
   exact-out input is the fair ceiling with no >1-wei over-charge, sub-par-NAV over-mint stays bounded
   dust, buy→sell / sell→buy round-trips can never profit, a donated hook balance changes no price and
   can't be drained, extreme-price/`int128`/zero-amount inputs revert cleanly, and Permit2 signatures
   can't be replayed.
-- `test/WstGBPBackstopHookInvariants.t.sol` (4) — stateful suite: a `Handler` drives long random
+- `test/WsgemBackstopHookInvariants.t.sol` (4) — stateful suite: a `Handler` drives long random
   sequences of the four swap modes (constant NAV) and the invariants assert no value extraction, the
   ownerless hook is never drained / holds only bounded exact-out dust, quoter == execution on every
   swap, and the pool never acquires AMM liquidity. Config: `[profile.default.invariant]` runs 64 /
   depth 32 / `fail_on_revert = false` (the handler records any parity mismatch into a ghost the
   invariant surfaces, so lenient revert handling can't mask a violation).
+- `test/WsgemFlippedOrderingHook.t.sol` (3) — end-to-end buys/sells in the **flipped** token ordering
+  (wsgem = currency0, gem = currency1) against etched mock tokens, proving the hook adapts when the wrapper
+  sorts below its underlying (the real tGBP/wstGBP pair never does). Standalone: own mocks, does not share
+  `WstGBPFixture`.
 
 ## Dependencies / toolchain
 
@@ -230,7 +235,7 @@ across three suites:
 - v4 `PoolSwapTest` refunds leftover native balance to `msg.sender`; test/integrator contracts that
   call it need a payable `receive()`.
 - Swaps must be settle-first (input paid before `swap`). Stock swap-first routers revert on `take`;
-  route via `WstGBPSwapRouter` or a settle-first solver/aggregator integration.
+  route via `WsgemSwapRouter` or a settle-first solver/aggregator integration.
 
 ## Roadmap / open work
 

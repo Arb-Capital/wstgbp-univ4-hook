@@ -2,9 +2,9 @@
 pragma solidity ^0.8.26;
 
 import {BaseHook} from "./base/BaseHook.sol";
-import {IwstGBP} from "../core/interfaces/IwstGBP.sol";
-import {IMaseerAct, IMaseerPip} from "../core/interfaces/IMaseerFeeds.sol";
-import {WstGBPWrap} from "../core/WstGBPWrap.sol";
+import {Iwsgem} from "../core/interfaces/Iwsgem.sol";
+import {IAct, IPip} from "../core/interfaces/IFeeds.sol";
+import {WsgemWrap} from "../core/WsgemWrap.sol";
 
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -17,43 +17,49 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {BeforeSwapDelta, toBeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 
-/// @title WstGBPBackstopHook (pure backstop — no AMM/LP)
-/// @notice A Uniswap v4 hook that gives a tGBP/wstGBP pool effectively unlimited depth by routing
-///         every swap through the wstGBP wrapper's atomic mint/redeem at the protocol's own prices:
-///         buys execute at `wstGBP.mintcost()`, sells at `wstGBP.burncost()`. LP adds are blocked.
+/// @title WsgemBackstopHook (pure backstop — no AMM/LP)
+/// @notice A Uniswap v4 hook that gives a gem/wsgem pool effectively unlimited depth by routing
+///         every swap through the wsgem wrapper's atomic mint/redeem at the protocol's own prices:
+///         buys execute at `wsgem.mintcost()`, sells at `wsgem.burncost()`. LP adds are blocked.
 ///
 /// @dev `beforeSwap` returns a `BeforeSwapDelta` whose specified leg exactly cancels the swap so the
 ///      AMM is bypassed entirely. The hook `take`s the swap's input currency from the PoolManager,
-///      feeds it into `wstGBP.mint`/`redeem`, and `settle`s the output — wrapping the swap's own
-///      tokens with no inventory. Settle-first routing required (see `WstGBPSwapRouter`).
+///      feeds it into `wsgem.mint`/`redeem`, and `settle`s the output — wrapping the swap's own
+///      tokens with no inventory. Settle-first routing required (see `WsgemSwapRouter`).
 ///
-///      Pool convention (enforced in the constructor): currency0 = tGBP, currency1 = wstGBP, so
-///      `zeroForOne == true` is a BUY of wstGBP and `false` is a SELL. Ownerless, holds no capital.
+///      The pool's two currencies are gem and wsgem in v4's canonical sorted order; the constructor
+///      adapts to whichever address sorts lower. A swap is a BUY of wsgem (mint) when its input currency
+///      is gem and a SELL (redeem) when its input is wsgem — i.e. `isBuy == (zeroForOne == gemIsZero)`.
+///      Ownerless, holds no capital.
 ///
 /// @dev SLIPPAGE IS THE CALLER'S RESPONSIBILITY. `beforeSwap` executes at the wrapper's live oracle price
 ///      (`mintcost`/`burncost`) with NO intrinsic slippage check, price floor, or sanity bound — it is a
-///      pure price-taker. wstGBP governance can move that price/spread between blocks (fees settable up to
+///      pure price-taker. wsgem governance can move that price/spread between blocks (fees settable up to
 ///      100%), so an unbounded swap (e.g. `minAmountOut == 0`, or a custom settle-first integration with no
 ///      bounds) executes at whatever the oracle says, however unfavorable. Always swap through
-///      `WstGBPSwapRouter` (or a solver) that enforces `minAmountOut`/`maxAmountIn`. See the README trust
+///      `WsgemSwapRouter` (or a solver) that enforces `minAmountOut`/`maxAmountIn`. See the README trust
 ///      model.
-contract WstGBPBackstopHook is BaseHook {
+contract WsgemBackstopHook is BaseHook {
     using SafeCast for uint256;
 
     uint256 internal constant WAD = 1e18;
 
-    Currency public immutable currency0; // tGBP (lower address)
-    Currency public immutable currency1; // wstGBP
-    IwstGBP public immutable wrapper;
-    address public immutable tgbp;
-    address public immutable wst;
+    Currency public immutable currency0; // min(gem, wsgem) — v4 canonical pool ordering
+    Currency public immutable currency1; // max(gem, wsgem)
+    Currency public immutable gemCurrency; // the underlying ("gem"), whichever slot it sorts into
+    Currency public immutable wsgemCurrency; // the wrapper token ("wsgem")
+    Iwsgem public immutable wrapper;
+    address public immutable gem;
+    address public immutable wsgem;
+    /// @dev True when `gem` is currency0 (gem < wsgem). A swap is a BUY iff `zeroForOne == gemIsZero`.
+    bool public immutable gemIsZero;
     /// @dev The wrapper's two immutable price feeds, cached so the hook can read the backstop price
     ///      directly (act.mintcost(pip.read())) and skip the wrapper's dispatch hop. Byte-identical to
     ///      `wrapper.mintcost()`/`burncost()`/`cooldown()` because `mint`/`redeem` use the same feeds.
-    IMaseerAct public immutable act;
-    IMaseerPip public immutable pip;
+    IAct public immutable act;
+    IPip public immutable pip;
 
-    error BadCurrencyOrdering();
+    error IdenticalCurrencies();
     error PoolNotSupported();
     error LiquidityNotAllowed();
     error WrapperUnderfunded(uint256 needed, uint256 available);
@@ -61,21 +67,31 @@ contract WstGBPBackstopHook is BaseHook {
     error RedeemCooldownActive();
     error TransferFailed();
 
-    constructor(IPoolManager _poolManager, IwstGBP _wrapper) BaseHook(_poolManager) {
+    constructor(IPoolManager _poolManager, Iwsgem _wrapper) BaseHook(_poolManager) {
         wrapper = _wrapper;
-        wst = address(_wrapper);
-        address _tgbp = _wrapper.gem();
-        tgbp = _tgbp;
-        act = IMaseerAct(_wrapper.act());
-        pip = IMaseerPip(_wrapper.pip());
-        if (_tgbp >= wst) revert BadCurrencyOrdering();
-        currency0 = Currency.wrap(_tgbp);
-        currency1 = Currency.wrap(wst);
-        // One-time max approval so `wrapper.mint` can pull tGBP from this hook during swaps.
-        // Unbounded is safe here: the hook holds no persistent tGBP (only transient sub-unit dust
+        address _wsgem = address(_wrapper);
+        wsgem = _wsgem;
+        address _gem = _wrapper.gem();
+        gem = _gem;
+        act = IAct(_wrapper.act());
+        pip = IPip(_wrapper.pip());
+        if (_gem == _wsgem) revert IdenticalCurrencies();
+
+        Currency _gemCurrency = Currency.wrap(_gem);
+        Currency _wsgemCurrency = Currency.wrap(_wsgem);
+        gemCurrency = _gemCurrency;
+        wsgemCurrency = _wsgemCurrency;
+        // v4 sorts pool currencies ascending; adapt to whichever token sorts lower rather than assuming
+        // gem < wsgem (true for tGBP/wstGBP, but not for an arbitrary pair).
+        bool _gemIsZero = _gem < _wsgem;
+        gemIsZero = _gemIsZero;
+        (currency0, currency1) = _gemIsZero ? (_gemCurrency, _wsgemCurrency) : (_wsgemCurrency, _gemCurrency);
+
+        // One-time max approval so `wrapper.mint` can pull gem from this hook during swaps.
+        // Unbounded is safe here: the hook holds no persistent gem (only transient sub-unit dust
         // mid-swap) and the wrapper is the trusted counterparty, so the approval exposes nothing
         // extra; a just-in-time exact approval would only add an SSTORE to every buy.
-        IERC20Minimal(_tgbp).approve(wst, type(uint256).max);
+        IERC20Minimal(_gem).approve(_wsgem, type(uint256).max);
     }
 
     /// @inheritdoc BaseHook
@@ -114,14 +130,22 @@ contract WstGBPBackstopHook is BaseHook {
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        if (Currency.unwrap(key.currency0) != tgbp || Currency.unwrap(key.currency1) != wst) {
+        if (
+            Currency.unwrap(key.currency0) != Currency.unwrap(currency0)
+                || Currency.unwrap(key.currency1) != Currency.unwrap(currency1)
+        ) {
             revert PoolNotSupported();
         }
 
+        // A swap is a BUY of wsgem (mint) when its input currency is gem, and a SELL (redeem) otherwise.
+        // gem is currency0 exactly when `gemIsZero`, so paying currency0 (`zeroForOne`) is a buy iff
+        // `gemIsZero`; the equality below is that XNOR and works for both address orderings.
+        bool isBuy = params.zeroForOne == gemIsZero;
+
         // Sells need an atomic redeem; a non-zero cooldown defers the wrapper's payout (incompatible
         // with an atomic swap) and this pool has no LP to fall back to, so reject the sell outright
-        // rather than burn wstGBP into a deferred, hook-owned redemption.
-        if (!params.zeroForOne && act.cooldown() != 0) revert RedeemCooldownActive();
+        // rather than burn wsgem into a deferred, hook-owned redemption.
+        if (!isBuy && act.cooldown() != 0) revert RedeemCooldownActive();
 
         bool exactInput = params.amountSpecified < 0;
         uint256 specifiedAmount = (exactInput ? uint256(-params.amountSpecified) : uint256(params.amountSpecified));
@@ -130,36 +154,37 @@ contract WstGBPBackstopHook is BaseHook {
         int128 deltaSpecified;
         int128 deltaUnspecified;
 
-        if (params.zeroForOne) {
-            // BUY wstGBP: tGBP (currency0) in -> wstGBP (currency1) out.
+        if (isBuy) {
+            // BUY wsgem: gem in -> wsgem out (mint). `gemCurrency`/`wsgemCurrency` are role-based, so
+            // the take/settle are correct regardless of which token sorts into currency0/currency1.
             if (exactInput) {
-                uint256 tgbpIn = specifiedAmount;
-                poolManager.take(currency0, address(this), tgbpIn);
-                uint256 wOut = wrapper.mint(tgbpIn);
-                _settleToManager(currency1, wOut);
-                deltaSpecified = tgbpIn.toInt128();
+                uint256 gemIn = specifiedAmount;
+                poolManager.take(gemCurrency, address(this), gemIn);
+                uint256 wOut = wrapper.mint(gemIn);
+                _settleToManager(wsgemCurrency, wOut);
+                deltaSpecified = gemIn.toInt128();
                 deltaUnspecified = -wOut.toInt128();
             } else {
                 uint256 wOut = specifiedAmount;
-                uint256 tgbpIn = FullMath.mulDivRoundingUp(wOut, _mintcost(), WAD);
-                poolManager.take(currency0, address(this), tgbpIn);
-                wrapper.mint(tgbpIn); // mints >= wOut; surplus stays as dust
-                _settleToManager(currency1, wOut);
+                uint256 gemIn = FullMath.mulDivRoundingUp(wOut, _mintcost(), WAD);
+                poolManager.take(gemCurrency, address(this), gemIn);
+                wrapper.mint(gemIn); // mints >= wOut; surplus stays as dust
+                _settleToManager(wsgemCurrency, wOut);
                 deltaSpecified = -wOut.toInt128();
-                deltaUnspecified = tgbpIn.toInt128();
+                deltaUnspecified = gemIn.toInt128();
             }
         } else {
-            // SELL wstGBP: wstGBP (currency1) in -> tGBP (currency0) out.
+            // SELL wsgem: wsgem in -> gem out (redeem).
             if (exactInput) {
                 uint256 wIn = specifiedAmount;
                 uint256 claim = FullMath.mulDiv(wIn, _burncost(), WAD);
                 _requireWrapperFunded(claim);
-                poolManager.take(currency1, address(this), wIn);
+                poolManager.take(wsgemCurrency, address(this), wIn);
                 uint256 received = _redeem(wIn);
                 // The funded pre-check assumes an atomic (cooldown()==0) redeem; assert the wrapper
                 // actually paid the full claim so a cooldown change can't silently zero the output.
                 if (received < claim) revert RedeemUnderpaid(claim, received);
-                _settleToManager(currency0, received);
+                _settleToManager(gemCurrency, received);
                 deltaSpecified = wIn.toInt128();
                 deltaUnspecified = -received.toInt128();
             } else {
@@ -168,10 +193,10 @@ contract WstGBPBackstopHook is BaseHook {
                 uint256 wIn = FullMath.mulDivRoundingUp(tOut, WAD, bc);
                 uint256 claim = FullMath.mulDiv(wIn, bc, WAD); // >= tOut
                 _requireWrapperFunded(claim);
-                poolManager.take(currency1, address(this), wIn);
+                poolManager.take(wsgemCurrency, address(this), wIn);
                 uint256 received = _redeem(wIn); // returns >= tOut; surplus stays as dust
                 if (received < tOut) revert RedeemUnderpaid(tOut, received);
-                _settleToManager(currency0, tOut);
+                _settleToManager(gemCurrency, tOut);
                 deltaSpecified = -tOut.toInt128();
                 deltaUnspecified = wIn.toInt128();
             }
@@ -182,20 +207,20 @@ contract WstGBPBackstopHook is BaseHook {
 
     /// @dev The backstop ask, read directly off the wrapper's immutable feeds (== `wrapper.mintcost()`).
     function _mintcost() internal view returns (uint256) {
-        return WstGBPWrap.price(act, pip, true);
+        return WsgemWrap.price(act, pip, true);
     }
 
     /// @dev The backstop bid, read directly off the wrapper's immutable feeds (== `wrapper.burncost()`).
     function _burncost() internal view returns (uint256) {
-        return WstGBPWrap.price(act, pip, false);
+        return WsgemWrap.price(act, pip, false);
     }
 
     function _redeem(uint256 wIn) internal returns (uint256 received) {
-        received = WstGBPWrap.redeem(wrapper, tgbp, wIn);
+        received = WsgemWrap.redeem(wrapper, gem, wIn);
     }
 
     function _requireWrapperFunded(uint256 needed) internal view {
-        uint256 available = IERC20Minimal(tgbp).balanceOf(wst);
+        uint256 available = IERC20Minimal(gem).balanceOf(wsgem);
         if (available < needed) revert WrapperUnderfunded(needed, available);
     }
 
@@ -206,6 +231,6 @@ contract WstGBPBackstopHook is BaseHook {
     }
 
     function _safeTransfer(address token, address to, uint256 amount) internal {
-        if (!WstGBPWrap.transfer(token, to, amount)) revert TransferFailed();
+        if (!WsgemWrap.transfer(token, to, amount)) revert TransferFailed();
     }
 }

@@ -17,7 +17,7 @@ gas_limit = "3000000000"
 [profile.default.fuzz]
 runs = 256
 
-# Stateful invariant runs (WstGBPBackstopHookInvariants). Kept modest because every call hits the
+# Stateful invariant runs (WsgemBackstopHookInvariants). Kept modest because every call hits the
 # mainnet fork. `fail_on_revert = false` lets random amount/price combos that hit a dust/funding/capacity
 # edge be discarded; the handler records any quoter/execution mismatch into a ghost the invariants assert,
 # so a real violation is never masked by the lenient revert handling.
