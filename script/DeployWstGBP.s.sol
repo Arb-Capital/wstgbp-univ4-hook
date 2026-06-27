@@ -66,6 +66,8 @@ contract DeployWstGBP is Script {
         // them; assert they match the wrapper's so the cached reads can never diverge from it.
         require(address(hook.act()) == wrapper.act(), "DeployWstGBP: act feed mismatch");
         require(address(hook.pip()) == wrapper.pip(), "DeployWstGBP: pip feed mismatch");
+        require(wrapper.canPass(address(hook)), "DeployWstGBP: hook is ban-listed");
+        require(wrapper.canPass(POOL_MANAGER), "DeployWstGBP: pool manager is ban-listed");
 
         key = PoolKey({
             currency0: Currency.wrap(currency0),
