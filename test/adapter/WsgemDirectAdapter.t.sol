@@ -127,6 +127,34 @@ contract WsgemDirectAdapterForkTest is WsgemAdapterForkBase {
         adapter.swapExactOutput(GEM, amtOut, q - 1, address(this), block.timestamp);
     }
 
+    /// @notice The slippage bounds guard the SELL direction too, not just buys: an exact-in sell honours
+    ///         `minAmountOut` and an exact-out sell honours `maxAmountIn` (the buy-side branches above and
+    ///         these sell-side ones are distinct code paths in `_swap`).
+    function test_sellMinAmountOutEnforced() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 q = adapter.quoteExactInput(WSGEM, amtIn);
+        vm.expectRevert(abi.encodeWithSelector(WsgemDirectAdapter.InsufficientOutput.selector, q, q + 1));
+        adapter.swapExactInput(WSGEM, amtIn, q + 1, address(this), block.timestamp);
+    }
+
+    function test_sellMaxAmountInEnforced() public {
+        uint256 amtOut = 1_000 * WAD;
+        uint256 q = adapter.quoteExactOutput(WSGEM, amtOut);
+        vm.expectRevert(abi.encodeWithSelector(WsgemDirectAdapter.ExcessiveInput.selector, q, q - 1));
+        adapter.swapExactOutput(WSGEM, amtOut, q - 1, address(this), block.timestamp);
+    }
+
+    /// @notice An approval-based swap from a payer who never approved the adapter reverts `TransferFailed`
+    ///         (the input `transferFrom` fails; the adapter's low-level call captures the failure rather than
+    ///         bubbling the token's own revert). Mirrors the router's `transferFrom`-fail guard.
+    function test_revertsWhenInputTransferFromFails() public {
+        address carol = address(0xCA401); // funded but has NOT approved the adapter
+        deal(GEM, carol, 1_000 * WAD);
+        vm.prank(carol);
+        vm.expectRevert(WsgemDirectAdapter.TransferFailed.selector);
+        adapter.swapExactInput(GEM, 1_000 * WAD, 0, carol, block.timestamp);
+    }
+
     function test_deadlineEnforced() public {
         vm.expectRevert(WsgemDirectAdapter.Expired.selector);
         adapter.swapExactInput(GEM, 1_000 * WAD, 0, address(this), block.timestamp - 1);
@@ -192,6 +220,29 @@ contract WsgemDirectAdapterForkTest is WsgemAdapterForkBase {
         adapter.swapExactInputPermit2(GEM, amtIn, 0, alice, permit, sig);
     }
 
+    /// @notice Exact-output buy funded via Permit2: the payer signs a `PermitTransferFrom` for `maxAmountIn`
+    ///         and the adapter pulls only the computed exact input (rounded up), delivering exactly `amountOut`.
+    function test_permit2ExactOutput() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtOut = 2_000 * WAD;
+        uint256 expectedIn = adapter.quoteExactOutput(GEM, amtOut);
+        uint256 maxIn = expectedIn + 10 * WAD;
+        deal(GEM, alice, maxIn);
+        vm.prank(alice);
+        IERC20Minimal(GEM).approve(PERMIT2_ADDR, type(uint256).max);
+
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermitFor(pk, address(adapter), GEM, maxIn, 0, block.timestamp + 1 hours);
+
+        vm.prank(alice);
+        uint256 spent = adapter.swapExactOutputPermit2(GEM, amtOut, maxIn, alice, permit, sig);
+        assertEq(spent, expectedIn, "pulled exactly the computed input");
+        assertEq(_bal(WSGEM, alice), amtOut, "alice got exact output");
+        assertEq(_bal(GEM, alice), maxIn - expectedIn, "only the exact input was pulled");
+        _assertAdapterClean();
+    }
+
     // --- Wrapper-gated reverts ---
 
     function test_buyRevertsWhenMintMarketClosed() public {
@@ -237,6 +288,57 @@ contract WsgemDirectAdapterForkTest is WsgemAdapterForkBase {
         // Buys price at mintcost == nav, unaffected by the redemption fee.
         assertEq(_adapterIn(true, 1_000 * WAD), 1_000 * WAD * WAD / wrapper.mintcost(), "buy unaffected");
         _assertAdapterClean();
+    }
+
+    // --- Defensive reverts: mirror the hook's adversarial coverage (forced via mocked wrapper/token) ---
+
+    /// @notice Defensive guard: if `wrapper.mint` ever returns fewer wsgem than the requested exact output
+    ///         (it cannot under correct rounding, but a misbehaving wrapper could), the adapter reverts
+    ///         `InsufficientOutput` rather than under-deliver. The gem pulled in is rolled back with the revert.
+    function test_buyRevertsWhenMintUnderDelivers() public {
+        uint256 amtOut = 1_000 * WAD;
+        vm.mockCall(WSGEM, abi.encodeWithSelector(Iwsgem.mint.selector), abi.encode(amtOut - 1));
+        vm.expectRevert(abi.encodeWithSelector(WsgemDirectAdapter.InsufficientOutput.selector, amtOut - 1, amtOut));
+        adapter.swapExactOutput(GEM, amtOut, type(uint256).max, address(this), block.timestamp);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Defensive guard: if delivering the minted wsgem to the recipient fails, the buy reverts
+    ///         `TransferFailed`. Forced by mocking the wsgem `transfer` to return false; `wrapper.mint` is
+    ///         unaffected (it mints via internal accounting, not `transfer`), so only the final leg fails.
+    function test_buyRevertsWhenOutputTransferFails() public {
+        vm.mockCall(WSGEM, abi.encodeWithSelector(IERC20Minimal.transfer.selector), abi.encode(false));
+        vm.expectRevert(WsgemDirectAdapter.TransferFailed.selector);
+        _adapterIn(true, 1_000 * WAD);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Defensive guard: if delivering the redeemed gem to the recipient fails, the sell reverts
+    ///         `TransferFailed`. The mock targets only the adapter→recipient leg (`to == address(this)`,
+    ///         `amount == amtOut`) so the wrapper's own redeem payout (paid to the adapter) still settles.
+    function test_sellRevertsWhenOutputTransferFails() public {
+        uint256 amtOut = 1_000 * WAD;
+        vm.mockCall(
+            GEM, abi.encodeWithSelector(IERC20Minimal.transfer.selector, address(this), amtOut), abi.encode(false)
+        );
+        vm.expectRevert(WsgemDirectAdapter.TransferFailed.selector);
+        adapter.swapExactOutput(WSGEM, amtOut, type(uint256).max, address(this), block.timestamp);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Defensive guard: if the wrapper's redeem ever pays out less than the funded claim (e.g. a
+    ///         mid-call cooldown change), the adapter reverts `RedeemUnderpaid` for both sell directions
+    ///         rather than settle short. Forced by mocking redeem to a no-op (returns an id but moves no gem)
+    ///         while the wrapper stays funded, so the balance diff measures 0. Mirrors the hook.
+    function test_sellRevertsWhenRedeemUnderpays() public {
+        vm.mockCall(WSGEM, abi.encodeWithSelector(Iwsgem.redeem.selector), abi.encode(uint256(1)));
+        uint256 amtIn = 1_000 * WAD;
+        uint256 claimIn = adapter.quoteExactInput(WSGEM, amtIn);
+        vm.expectRevert(abi.encodeWithSelector(WsgemDirectAdapter.RedeemUnderpaid.selector, claimIn, 0));
+        adapter.swapExactInput(WSGEM, amtIn, 0, address(this), block.timestamp);
+        vm.expectRevert(); // RedeemUnderpaid (exact-out)
+        adapter.swapExactOutput(WSGEM, 1_000 * WAD, type(uint256).max, address(this), block.timestamp);
+        vm.clearMockedCalls();
     }
 
     // --- A donated balance can neither subsidize pricing nor be drained ---

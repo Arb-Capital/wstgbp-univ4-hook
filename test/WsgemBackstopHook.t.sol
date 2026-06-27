@@ -592,6 +592,19 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         new WsgemQuoter(Iwsgem(address(bad)));
     }
 
+    /// @notice The hook's constructor rejects the same degenerate `gem() == wrapper` wrapper. The guard sits
+    ///         after `BaseHook`'s address-flag validation, so the hook must be deployed to a mined address for
+    ///         the body (and thus the guard) to run at all — hence the mine here.
+    function test_hookRejectsIdenticalCurrencies() public {
+        SelfGemWrapper bad = new SelfGemWrapper();
+        uint160 flags =
+            uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
+        bytes memory args = abi.encode(PM, Iwsgem(address(bad)));
+        (, bytes32 salt) = HookMiner.find(address(this), flags, type(WsgemBackstopHook).creationCode, args);
+        vm.expectRevert(WsgemBackstopHook.IdenticalCurrencies.selector);
+        new WsgemBackstopHook{salt: salt}(PM, Iwsgem(address(bad)));
+    }
+
     /// @notice Defensive guard: if the wrapper's redeem ever pays out less than the funded claim (e.g. a
     ///         mid-call cooldown change), the hook reverts `RedeemUnderpaid` for both sell directions
     ///         rather than settle the seller short. Forced here by mocking redeem to a no-op (it returns
@@ -738,11 +751,20 @@ contract FlippedOrderWrapper {
     }
 }
 
-/// @dev Wrapper stub whose `gem()` returns its own address — the degenerate same-currency case. Only `gem()`
-///      is read before the quoter's `IdenticalCurrencies` guard fires, so nothing else is implemented.
+/// @dev Wrapper stub whose `gem()` returns its own address — the degenerate same-currency case. The quoter
+///      reads only `gem()` before its `IdenticalCurrencies` guard; the hook caches `act()`/`pip()` first, so
+///      those are stubbed too (returning any address) to let its guard be the thing that fires.
 contract SelfGemWrapper {
     function gem() external view returns (address) {
         return address(this);
+    }
+
+    function act() external pure returns (address) {
+        return address(0xAC7);
+    }
+
+    function pip() external pure returns (address) {
+        return address(0xB1B);
     }
 }
 
