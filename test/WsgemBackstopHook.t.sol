@@ -198,6 +198,36 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         _assertHookClean();
     }
 
+    /// @notice A live-NAV 100% redemption fee (`bpsout == 10_000`) zeroes `burncost` while the wrapper's
+    ///         `redeem` (which only guards `nav == 0`, not `burncost == 0`) would still burn the seller's
+    ///         wsgem for 0 gem. With `minAmountOut == 0` there is no slippage backstop, so the hook itself
+    ///         must revert (`InvalidPrice`) for both exact-in and exact-out sells. Buys (mintcost == nav)
+    ///         are unaffected — the buy path needs no such guard since mintcost == 0 iff nav == 0, which
+    ///         the wrapper's mint already rejects — and the quoter flags it off-chain (price == 0).
+    function test_sellRevertsWhenBurncostZero() public {
+        _setSpreads(0, 10_000); // 100% bid spread => burncost == 0; 0 ask spread => mintcost == nav
+        assertEq(wrapper.burncost(), 0, "burncost zeroed");
+        assertGt(wrapper.mintcost(), 0, "mintcost still live");
+
+        (,, bool executableIn, string memory reasonIn) = quoter.previewSwap(false, -int256(1_000 * WAD));
+        assertFalse(executableIn, "preview exact-in not executable at zero burncost");
+        assertEq(reasonIn, "invalid sell price", "preview distinguishes zero burncost from a pause");
+        (,, bool executableOut, string memory reasonOut) = quoter.previewSwap(false, int256(1_000 * WAD));
+        assertFalse(executableOut, "preview exact-out not executable at zero burncost");
+        assertEq(reasonOut, "invalid sell price", "preview exact-out distinguishes zero burncost from a pause");
+
+        // Both sell directions revert instead of burning wsgem for 0 gem (minAmountOut == 0). Exact-out
+        // would otherwise divide by zero in `mulDivRoundingUp`; the guard reverts cleanly first.
+        vm.expectRevert();
+        _swapIn(false, 1_000 * WAD);
+        vm.expectRevert();
+        _swapOut(false, 1_000 * WAD, 2_000 * WAD);
+
+        // Buys price at mintcost == nav, unaffected by the redemption fee.
+        assertEq(_swapIn(true, 1_000 * WAD), 1_000 * WAD * WAD / wrapper.mintcost(), "buy unaffected");
+        _assertHookClean();
+    }
+
     function test_swapFirstRoutingIsUnsupported() public {
         vm.expectRevert();
         swapFirstRouter.swap(

@@ -220,6 +220,25 @@ contract WsgemDirectAdapterForkTest is WsgemAdapterForkBase {
         _assertAdapterClean();
     }
 
+    /// @notice A live-NAV 100% redemption fee (`bpsout == 10_000`) zeroes `burncost` while the wrapper's
+    ///         `redeem` (which only guards `nav == 0`) would still burn the seller's wsgem for 0 gem. The
+    ///         adapter must revert `InvalidPrice` for both exact-in and exact-out sells; buys (mintcost ==
+    ///         nav) are unaffected. Mirrors the hook so the two venues stay behaviorally identical.
+    function test_sellRevertsWhenBurncostZero() public {
+        _setSpreads(0, 10_000); // 100% bid spread => burncost == 0; 0 ask spread => mintcost == nav
+        assertEq(wrapper.burncost(), 0, "burncost zeroed");
+        assertGt(wrapper.mintcost(), 0, "mintcost still live");
+
+        vm.expectRevert(WsgemDirectAdapter.InvalidPrice.selector);
+        _adapterIn(false, 1_000 * WAD);
+        vm.expectRevert(WsgemDirectAdapter.InvalidPrice.selector);
+        _adapterOut(false, 1_000 * WAD, 2_000 * WAD);
+
+        // Buys price at mintcost == nav, unaffected by the redemption fee.
+        assertEq(_adapterIn(true, 1_000 * WAD), 1_000 * WAD * WAD / wrapper.mintcost(), "buy unaffected");
+        _assertAdapterClean();
+    }
+
     // --- A donated balance can neither subsidize pricing nor be drained ---
 
     function test_donatedBalanceIsInert() public {

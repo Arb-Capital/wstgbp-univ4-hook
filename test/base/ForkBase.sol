@@ -42,7 +42,9 @@ abstract contract ForkBase is Test {
     // --- generic helpers ---
 
     /// @dev Sign a Permit2 `PermitTransferFrom` whose spender is `spender` (the venue that will call
-    ///      `permitTransferFrom`). Reads the domain separator off the canonical Permit2.
+    ///      `permitTransferFrom`). Reads the domain separator off the canonical Permit2. The EIP-712 digest
+    ///      is built in `_permitDigest` so this helper's live locals stay under the stack limit when
+    ///      `forge coverage` compiles without the optimizer/viaIR.
     function _signPermitFor(uint256 pk, address spender, address token, uint256 amount, uint256 nonce, uint256 deadline)
         internal
         view
@@ -53,13 +55,21 @@ abstract contract ForkBase is Test {
             nonce: nonce,
             deadline: deadline
         });
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, _permitDigest(spender, token, amount, nonce, deadline));
+        sig = abi.encodePacked(r, s, v);
+    }
+
+    /// @dev The EIP-712 digest a Permit2 `PermitTransferFrom` signature must sign over.
+    function _permitDigest(address spender, address token, uint256 amount, uint256 nonce, uint256 deadline)
+        internal
+        view
+        returns (bytes32)
+    {
         bytes32 tokenPermissions = keccak256(abi.encode(TOKEN_PERMISSIONS_TYPEHASH, token, amount));
         bytes32 structHash =
             keccak256(abi.encode(PERMIT_TRANSFER_FROM_TYPEHASH, tokenPermissions, spender, nonce, deadline));
         bytes32 ds = IPermit2DomainSeparator(PERMIT2_ADDR).DOMAIN_SEPARATOR();
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", ds, structHash));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
-        sig = abi.encodePacked(r, s, v);
+        return keccak256(abi.encodePacked("\x19\x01", ds, structHash));
     }
 
     function _bal(address token, address who) internal view returns (uint256) {

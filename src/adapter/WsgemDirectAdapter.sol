@@ -52,6 +52,7 @@ contract WsgemDirectAdapter {
     error WrapperUnderfunded(uint256 needed, uint256 available);
     error RedeemUnderpaid(uint256 expected, uint256 received);
     error RedeemCooldownActive();
+    error InvalidPrice();
     error Permit2TokenMismatch();
     error TransferFailed();
 
@@ -213,6 +214,10 @@ contract WsgemDirectAdapter {
             // SELL wsgem: redeem to gem at `burncost`. Atomic only when cooldown is 0.
             if (act.cooldown() != 0) revert RedeemCooldownActive();
             uint256 bc = _burncost();
+            // A live-NAV 100% redemption fee makes burncost 0 (the wrapper's redeem only guards nav==0,
+            // not burncost==0), which would burn the input for 0 gem out; reject it so the sell path
+            // matches the buy path, where mintcost==0 iff nav==0 and the wrapper's mint already reverts.
+            if (bc == 0) revert InvalidPrice();
             if (d.exactInput) {
                 amountIn = d.specified;
                 uint256 claim = WsgemWrap.quoteIn(false, amountIn, bc);

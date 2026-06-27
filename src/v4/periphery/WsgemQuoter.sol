@@ -106,13 +106,15 @@ contract WsgemQuoter {
         view
         returns (uint256 amountIn, uint256 amountOut, bool executable, string memory reason)
     {
-        // A paused oracle reads as a zero NAV (the oracle feed's pause pokes 0), so `mintcost()`/`burncost()`
-        // are 0 and the quote arithmetic below would divide by zero. Report it as non-executable like every
-        // other gate instead of reverting, so off-chain callers always get a clean (executable, reason).
-        // Read the price once here and reuse it for the quote and the executability check below.
         bool buy = zeroForOne == gemIsZero;
-        uint256 price = _price(buy);
-        if (price == 0) return (0, 0, false, "oracle paused");
+        uint256 nav = pip.read();
+        uint256 price = buy ? act.mintcost(nav) : act.burncost(nav);
+        if (price == 0) {
+            // A paused oracle pokes `pip` to 0, zeroing both costs. Otherwise NAV is live but the wrapper
+            // price is still zero (for sells this can happen when burncost is zero), so execution would
+            // revert `InvalidPrice`; distinguish that from an oracle pause for off-chain callers.
+            return (0, 0, false, nav == 0 ? "oracle paused" : buy ? "invalid buy price" : "invalid sell price");
+        }
 
         if (amountSpecified < 0) {
             amountIn = uint256(-amountSpecified);

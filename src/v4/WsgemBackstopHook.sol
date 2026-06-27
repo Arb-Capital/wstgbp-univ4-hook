@@ -65,6 +65,7 @@ contract WsgemBackstopHook is BaseHook {
     error WrapperUnderfunded(uint256 needed, uint256 available);
     error RedeemUnderpaid(uint256 expected, uint256 received);
     error RedeemCooldownActive();
+    error InvalidPrice();
     error TransferFailed();
 
     constructor(IPoolManager _poolManager, Iwsgem _wrapper) BaseHook(_poolManager) {
@@ -174,10 +175,15 @@ contract WsgemBackstopHook is BaseHook {
                 deltaUnspecified = gemIn.toInt128();
             }
         } else {
-            // SELL wsgem: wsgem in -> gem out (redeem).
+            // SELL wsgem: wsgem in -> gem out (redeem). A live-NAV 100% redemption fee makes burncost 0
+            // (the wrapper's redeem only guards nav==0, not burncost==0), which would burn the input for
+            // 0 gem out; reject it so the sell path matches the buy path, where mintcost==0 iff nav==0 and
+            // the wrapper's mint already reverts. Read burncost once and reuse it for both sub-paths.
+            uint256 bc = _burncost();
+            if (bc == 0) revert InvalidPrice();
             if (exactInput) {
                 uint256 wIn = specifiedAmount;
-                uint256 claim = FullMath.mulDiv(wIn, _burncost(), WAD);
+                uint256 claim = FullMath.mulDiv(wIn, bc, WAD);
                 _requireWrapperFunded(claim);
                 poolManager.take(wsgemCurrency, address(this), wIn);
                 uint256 received = _redeem(wIn);
@@ -189,7 +195,6 @@ contract WsgemBackstopHook is BaseHook {
                 deltaUnspecified = -received.toInt128();
             } else {
                 uint256 tOut = specifiedAmount;
-                uint256 bc = _burncost();
                 uint256 wIn = FullMath.mulDivRoundingUp(tOut, WAD, bc);
                 uint256 claim = FullMath.mulDiv(wIn, bc, WAD); // >= tOut
                 _requireWrapperFunded(claim);
