@@ -79,6 +79,10 @@ contract DeployWstGBP is Script {
         pm.initialize(key, SQRT_PRICE_1_1);
 
         router = new WsgemSwapRouter(pm);
+        // In the approval-based path the router is the `msg.sender` of the input-token `transferFrom`
+        // (a sell calls the compliance-gated `wstGBP.transferFrom`), so it must not be ban-listed
+        // either. (Permit2 entrypoints route the transfer through Permit2, not the router.)
+        require(wrapper.canPass(address(router)), "DeployWstGBP: router is ban-listed");
         quoter = new WsgemQuoter(wrapper);
         // The quoter caches the same `act`/`pip` feed proxies as the hook; assert at deploy time that they
         // match the wrapper's, so the quoter prices off the same feeds `wstGBP` reads (and the same ones
