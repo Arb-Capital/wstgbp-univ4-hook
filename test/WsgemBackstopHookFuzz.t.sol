@@ -207,6 +207,29 @@ contract WsgemBackstopHookFuzzTest is WsgemForkBase {
         _assertHookClean();
     }
 
+    /// @notice Complement to the extreme-price REVERT tests above: at the arithmetic extremes the math must
+    ///         also be CORRECT when it neither overflows nor dusts — quoter == execution at mintcost == 1 wei
+    ///         (a tiny buy stays far below int128) and at mintcost == 1e36 (a buy above the dust floor; the
+    ///         wrapper's 512-bit `mulDiv` does not overflow). Guards against silent MIS-pricing at the range
+    ///         ends, not just clean reverts. Spreads are zeroed so mintcost == nav exactly.
+    function test_quoterMatchesExecutionAtArithmeticExtremes() public {
+        _setSpreads(0, 0);
+
+        // Low extreme: nav == 1 wei => mintcost == 1. out = in * 1e18 stays well under int128 for a tiny in.
+        _setNav(1);
+        assertEq(wrapper.mintcost(), 1, "mintcost == 1 wei");
+        uint256 smallIn = 100; // 100 wei gem -> 1e20 wsgem, far below int128.max (~1.7e38)
+        assertEq(_swapIn(true, smallIn), quoter.quoteExactInput(true, smallIn), "buy quote==exec at 1-wei mintcost");
+
+        // High extreme: nav == 1e36 => mintcost == 1e36. A buy >= the dust floor prices exactly with no
+        // overflow (5e36 * 1e18 = 5e54 < 2^256).
+        _setNav(1e36);
+        assertEq(wrapper.mintcost(), 1e36, "mintcost == 1e36");
+        uint256 bigIn = 5e36; // >= mintcost (clears dust); out = 5e36 * 1e18 / 1e36 = 5e18
+        deal(GEM, address(this), bigIn);
+        assertEq(_swapIn(true, bigIn), quoter.quoteExactInput(true, bigIn), "buy quote==exec at 1e36 mintcost");
+    }
+
     /// @notice A specified amount above int128.max must revert cleanly (the `specifiedAmount.toInt128()`
     ///         bound in `_beforeSwap`), never wrap around. Fund the actor enough to reach the hook.
     function test_amountSpecifiedBeyondInt128RevertsCleanly() public {

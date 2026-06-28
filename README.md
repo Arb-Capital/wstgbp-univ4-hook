@@ -125,18 +125,19 @@ Both run via the `Makefile` and exclude the test suite, deploy script, and vendo
 `ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
 to a public RPC).
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (82 tests across
-five suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (63): pricing ×
-4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2 matrix,
-LP-add revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity,
-swap-first-routing rejection, and a red-team pass — paused-oracle preview, blacklist-bricks-pool
-(including banned output recipients), the hook applying no slippage of its own, callback access control,
-and defensive transfer/redeem/pool-guard coverage. `test/WsgemBackstopHookFuzz.t.sol` (11):
-adversarial math fuzzed across the whole oracle price range — quoter == execution (all four modes),
-exact-out ceiling with no >1-wei over-charge, bounded
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (86 tests across
+five suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (66): pricing ×
+4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2 matrix
+(incl. the inclusive `deadline == now` boundary), LP-add revert, market-closed / underfunded / cooldown /
+capacity reverts, cached-feed parity, swap-first-routing rejection, and a red-team pass — paused-oracle
+preview, blacklist-bricks-pool (including banned output recipients, a banned payer — sell input gated,
+buy input not — and a mid-block ban that proves compliance is re-checked, never cached), the hook applying
+no slippage of its own, callback access control, and defensive transfer/redeem/pool-guard coverage.
+`test/WsgemBackstopHookFuzz.t.sol` (12): adversarial math fuzzed across the whole oracle price range —
+quoter == execution (all four modes), exact-out ceiling with no >1-wei over-charge, bounded
 sub-par-NAV over-mint dust, round-trips that can never profit, a donated hook balance that changes no
-price and can't be drained, clean reverts at the price/`int128`/zero-amount extremes, and Permit2
-replay rejection. `test/WsgemBackstopHookInvariants.t.sol` (4): a stateful handler drives long random
+price and can't be drained, clean reverts at the price/`int128`/zero-amount extremes plus correct
+quoter == execution at the arithmetic extremes (mintcost 1 wei / 1e36), and Permit2 replay rejection. `test/WsgemBackstopHookInvariants.t.sol` (4): a stateful handler drives long random
 swap sequences and asserts no value extraction, the ownerless hook is never drained, quoter == execution
 every swap, and the pool never holds AMM liquidity. `test/WsgemSellFloorStress.t.sol` (2) and
 `test/WsgemGasComparison.t.sol` (2) cover the swapper's economics: a multi-actor mass-exit that drains

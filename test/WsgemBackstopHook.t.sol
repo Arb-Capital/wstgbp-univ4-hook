@@ -136,6 +136,37 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         router.swapExactInput(key, true, 1_000 * WAD, 0, address(this), block.timestamp - 1);
     }
 
+    /// @notice Boundary: `ensure` reverts only on `block.timestamp > deadline`, so a deadline EXACTLY equal
+    ///         to the current timestamp must still execute. The expiry tests only ever probe `deadline - 1`,
+    ///         leaving the inclusive edge unasserted. Cover it for both the plain and the Permit2 entrypoints
+    ///         (Permit2's own `SignatureTransfer` likewise expires only when `block.timestamp > deadline`).
+    function test_deadlineExactBoundarySucceeds() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 expected = quoter.quoteExactInput(true, amtIn);
+
+        // Plain entrypoint: deadline == now is honored (not expired).
+        assertEq(
+            router.swapExactInput(key, true, amtIn, 0, address(this), block.timestamp),
+            expected,
+            "plain: deadline == now executes"
+        );
+
+        // Permit2 entrypoint: permit.deadline == now is honored by both `ensure` and Permit2 itself.
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        deal(GEM, alice, amtIn);
+        vm.prank(alice);
+        IERC20Minimal(GEM).approve(PERMIT2_ADDR, type(uint256).max);
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermit(pk, GEM, amtIn, 0, block.timestamp); // deadline == now
+        vm.prank(alice);
+        assertEq(
+            router.swapExactInputPermit2(key, true, amtIn, 0, alice, permit, sig),
+            expected,
+            "permit2: deadline == now executes"
+        );
+    }
+
     function test_recipientReceivesOutput() public {
         address bob = address(0xB0B);
         uint256 amtIn = 1_000 * WAD;
@@ -619,6 +650,66 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         vm.expectRevert();
         router.swapExactInput(key, true, 1_000 * WAD, 0, bannedRecipient, block.timestamp);
         vm.clearMockedCalls();
+    }
+
+    /// @notice Blacklist completeness + a direction asymmetry the other bans miss. The bans above cover the
+    ///         hook, the PoolManager, and the output recipient — but never the PAYER funding the input. The
+    ///         `cop` this hook reads is wstGBP's, and it gates wstGBP movements only, so a banned payer's
+    ///         exposure is direction-dependent:
+    ///          - SELL: the input is wsgem, so `wsgem.transferFrom(payer -> PM)` reverts — a banned holder
+    ///            cannot exit through the pool.
+    ///          - BUY: the input is gem (tGBP), which wstGBP's `cop` does NOT gate (tGBP enforces its own
+    ///            compliance separately), so funding to a CLEAN recipient executes; the wstGBP ban only bites
+    ///            at delivery — a buy routed to the banned address itself reverts on the recipient gate.
+    ///         Documents that the pool inherits exactly wstGBP's compliance surface — gem-side input
+    ///         compliance is the gem token's own concern, not this hook's.
+    function test_blacklistedPayerCompliance() public {
+        address cop = IHasCop(WSGEM).cop();
+        address clean = address(0xC1EA0);
+        deal(GEM, WSGEM, 10_000_000 * WAD); // fund the sell path so funding never confounds the ban
+
+        // Ban only the payer (this contract) on wstGBP's cop; router/PM/clean recipient stay clean.
+        vm.mockCall(cop, abi.encodeWithSignature("pass(address)", address(this)), abi.encode(false));
+
+        // SELL: the banned payer's wsgem input cannot move -> revert.
+        vm.expectRevert();
+        router.swapExactInput(key, false, 1_000 * WAD, 0, clean, block.timestamp);
+
+        // BUY to a CLEAN recipient: the gem input is not gated by wstGBP's cop, so it funds and delivers.
+        uint256 expected = quoter.quoteExactInput(true, 1_000 * WAD);
+        assertEq(
+            router.swapExactInput(key, true, 1_000 * WAD, 0, clean, block.timestamp),
+            expected,
+            "buy funds via gem (ungated by wstGBP cop) and delivers to a clean recipient"
+        );
+
+        // BUY to SELF (the banned payer as recipient): the wsgem delivery gate reverts — a banned address
+        // still cannot end up holding wsgem.
+        vm.expectRevert();
+        router.swapExactInput(key, true, 1_000 * WAD, 0, address(this), block.timestamp);
+
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Compliance is re-checked on every swap (no caching), so a ban that lands BETWEEN two swaps in
+    ///         the same block takes effect on the next one — modelling a governance ban interleaved with a
+    ///         user's activity. The first sell clears; once the payer is banned the next sell reverts; lifting
+    ///         the ban restores access. Distinct from `test_blacklistBricksPool` (which bans the hook/PM, not
+    ///         the user) and proves the status is read fresh, never memoized across swaps.
+    function test_blacklistStatusChangeTakesEffectBetweenSwaps() public {
+        address cop = IHasCop(WSGEM).cop();
+        deal(GEM, WSGEM, 10_000_000 * WAD); // fund the sell path
+
+        assertGt(_swapIn(false, 1_000 * WAD), 0, "sell clears while the payer is clean");
+
+        // Ban lands mid-block; nothing is cached, so the next sell reverts.
+        vm.mockCall(cop, abi.encodeWithSignature("pass(address)", address(this)), abi.encode(false));
+        vm.expectRevert();
+        _swapIn(false, 1_000 * WAD);
+
+        // Lifting the ban restores access on the very next swap (re-checked, not memoized).
+        vm.clearMockedCalls();
+        assertGt(_swapIn(false, 1_000 * WAD), 0, "sell clears again after the ban lifts");
     }
 
     /// @notice M-02 (red-team): the hook executes at the live oracle price with NO intrinsic slippage or
