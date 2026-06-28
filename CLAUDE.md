@@ -190,9 +190,9 @@ hook is mined+deployed on the fork. The market gate (`act`) is forced open via
 `vm.store(act, keccak256("maseer.gate.mint.open"), 0)` etc. for determinism. The shared fork
 scaffolding (mine/deploy/init/seed, slot constants, swap/quote/sign helpers, plus `_setNav`/`_setSpreads`
 for driving the oracle) lives in the concrete `test/base/WstGBPFixture.sol` (over the generic `ForkBase`),
-reached by the three v4 suites via `WsgemForkBase`. 65 tests across three suites (plus a standalone
+reached by the three v4 suites via `WsgemForkBase`. 74 tests across three suites (plus a standalone
 flipped-ordering e2e suite, below):
-- `test/WsgemBackstopHook.t.sol` (50) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
+- `test/WsgemBackstopHook.t.sol` (59) — the pure-backstop hook + router + quoter: pricing × 4, 25bps
   round-trip, quoter == execution (4 modes + fuzz), `previewSwap` flags, router hardening (minOut /
   maxIn / deadline / recipient / surplus refund, Permit2), LP-add revert, market-closed + underfunded
   + cooldown + capacity reverts, swap-first routing reverting, **L-02** capacity-uses-minted-amount,
@@ -211,7 +211,7 @@ flipped-ordering e2e suite, below):
   swap, and the pool never acquires AMM liquidity. Config: `[profile.default.invariant]` runs 64 /
   depth 32 / `fail_on_revert = false` (the handler records any parity mismatch into a ghost the
   invariant surfaces, so lenient revert handling can't mask a violation).
-- `test/WsgemFlippedOrderingHook.t.sol` (3) — end-to-end buys/sells in the **flipped** token ordering
+- `test/WsgemFlippedOrderingHook.t.sol` (4) — end-to-end buys/sells in the **flipped** token ordering
   (wsgem = currency0, gem = currency1) against etched mock tokens, proving the hook adapts when the wrapper
   sorts below its underlying (the real tGBP/wstGBP pair never does). Standalone: own mocks, does not share
   `WstGBPFixture`.

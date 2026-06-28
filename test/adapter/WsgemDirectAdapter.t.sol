@@ -351,6 +351,123 @@ contract WsgemDirectAdapterForkTest is WsgemAdapterForkBase {
         assertGe(_bal(GEM, address(adapter)), 100_000 * WAD, "gem donation not drained");
     }
 
+    // --- Additional edge cases: boundaries, untested gate paths, and documented-but-unasserted behavior ---
+
+    /// @notice `recipient == address(0)` is documented to route the output to `msg.sender`. Every other test
+    ///         passes an explicit recipient, so the default mapping (`_to`) is never asserted on its own.
+    function test_recipientZeroRoutesToSender() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 expected = adapter.quoteExactInput(GEM, amtIn);
+        uint256 w0 = _bal(WSGEM, address(this));
+        uint256 out = adapter.swapExactInput(GEM, amtIn, 0, address(0), block.timestamp);
+        assertEq(out, expected, "output amount");
+        assertEq(_bal(WSGEM, address(this)) - w0, expected, "address(0) routed output to msg.sender");
+    }
+
+    /// @notice The adapter has no `burnable()` pre-check — a sell when the burn market is closed must revert
+    ///         because `wrapper.redeem` itself reverts. Proven here at execution (the suite otherwise only
+    ///         gates sells via cooldown / underfunding / burncost==0). Buys are unaffected by the burn gate.
+    function test_sellRevertsWhenBurnMarketClosed() public {
+        vm.store(ACT, OPEN_BURN, bytes32(type(uint256).max)); // burnable() => false
+        assertFalse(wrapper.burnable(), "burn market closed");
+        vm.expectRevert();
+        _adapterIn(false, 1_000 * WAD);
+        assertGt(_adapterIn(true, 1_000 * WAD), 0, "buy unaffected by the burn gate");
+    }
+
+    /// @notice At a paused oracle (`pip.read() == 0`) both costs are zero: a buy divides by the zero mintcost
+    ///         inside `wrapper.mint` and a sell hits the adapter's `InvalidPrice` guard (burncost == 0). The
+    ///         suite only covered the paused oracle via `previewSwap`; this asserts the execution paths revert.
+    function test_swapRevertsWhenOraclePaused() public {
+        _setNav(0);
+        vm.expectRevert(); // buy: wrapper.mint divides by the zero mintcost
+        _adapterIn(true, 1_000 * WAD);
+        vm.expectRevert(WsgemDirectAdapter.InvalidPrice.selector); // sell: burncost == 0
+        _adapterIn(false, 1_000 * WAD);
+    }
+
+    /// @notice The exact-output sell path has its OWN `_requireWrapperFunded(claim)` call (distinct from the
+    ///         exact-in path covered by `test_sellRevertsWhenWrapperUnderfunded`); drive it under-reserved.
+    function test_sellExactOutputRevertsWhenUnderfunded() public {
+        deal(GEM, WSGEM, 1 * WAD);
+        uint256 amtOut = 1_000 * WAD;
+        uint256 wIn = _ceil(amtOut * WAD, wrapper.burncost());
+        uint256 claim = wIn * wrapper.burncost() / WAD; // == the adapter's computed claim (>= amtOut)
+        vm.expectRevert(abi.encodeWithSelector(WsgemDirectAdapter.WrapperUnderfunded.selector, claim, 1 * WAD));
+        _adapterOut(false, amtOut, type(uint256).max);
+    }
+
+    /// @notice The wrapper's dust floors (mint needs `amt >= mintcost`, redeem needs `amt >= 1e18`) make a
+    ///         zero-amount swap revert; `_pull` no-ops on a zero amount, so the wrapper is the backstop. The
+    ///         v4 hook asserts this (`test_zeroAmountSwapsRevert`); the adapter should match.
+    function test_zeroAmountSwapsRevert() public {
+        vm.expectRevert(); // buy: mint(0) below the dust threshold
+        _adapterIn(true, 0);
+        vm.expectRevert(); // sell: redeem(0) below the 1-wsgem minimum
+        _adapterIn(false, 0);
+    }
+
+    /// @notice Funding boundary: with the wrapper holding gem EXACTLY equal to the redeem claim, the sell
+    ///         must succeed and pay the full claim — the guard is `available < needed` (strict), so equality
+    ///         passes. The underfunded tests only ever probe `available << claim`.
+    function test_sellSucceedsWhenWrapperFundedExactly() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 claim = amtIn * wrapper.burncost() / WAD;
+        deal(GEM, WSGEM, claim); // available == needed
+        uint256 t0 = _bal(GEM, address(this));
+        uint256 out = _adapterIn(false, amtIn);
+        assertEq(out, claim, "received the full claim at the funding boundary");
+        assertEq(_bal(GEM, address(this)) - t0, claim, "payer received full claim");
+        assertEq(_bal(GEM, WSGEM), 0, "wrapper drained to exactly zero");
+        _assertAdapterClean();
+    }
+
+    /// @notice The adapter emits `Swap(payer, recipient, buy, amountIn, amountOut)` once per swap; no test
+    ///         asserted its topics/values before.
+    function test_swapEmitsEvent() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 expectedOut = adapter.quoteExactInput(GEM, amtIn);
+        vm.expectEmit(true, true, false, true, address(adapter));
+        emit WsgemDirectAdapter.Swap(address(this), address(this), true, amtIn, expectedOut);
+        _adapterIn(true, amtIn);
+    }
+
+    // --- Permit2 expiry & replay ---
+
+    /// @notice A Permit2 entrypoint enforces the deadline via `ensure(permit.deadline)` — a distinct argument
+    ///         source from the plain entrypoints' `deadline`. A past `permit.deadline` reverts `Expired`.
+    function test_permit2RevertsWhenExpired() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtIn = 1_000 * WAD;
+        deal(GEM, alice, amtIn);
+        vm.prank(alice);
+        IERC20Minimal(GEM).approve(PERMIT2_ADDR, type(uint256).max);
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermitFor(pk, address(adapter), GEM, amtIn, 0, block.timestamp - 1); // already expired
+        vm.prank(alice);
+        vm.expectRevert(WsgemDirectAdapter.Expired.selector);
+        adapter.swapExactInputPermit2(GEM, amtIn, 0, alice, permit, sig);
+    }
+
+    /// @notice A signed Permit2 permit is single-use: replaying the same (nonce 0) permit reverts inside
+    ///         Permit2 (the nonce bit is already spent). Mirrors the v4 suite's replay guard.
+    function test_permit2CannotBeReplayed() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtIn = 1_000 * WAD;
+        deal(GEM, alice, 2 * amtIn);
+        vm.prank(alice);
+        IERC20Minimal(GEM).approve(PERMIT2_ADDR, type(uint256).max);
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermitFor(pk, address(adapter), GEM, amtIn, 0, block.timestamp + 1 hours);
+        vm.prank(alice);
+        adapter.swapExactInputPermit2(GEM, amtIn, 0, alice, permit, sig);
+        vm.prank(alice);
+        vm.expectRevert(); // Permit2 InvalidNonce — the signature can't be replayed
+        adapter.swapExactInputPermit2(GEM, amtIn, 0, alice, permit, sig);
+    }
+
     // --- Constructor guard: a wrapper that names itself as its own underlying is rejected ---
 
     /// @notice The adapter resolves direction from `tokenIn` by matching `gem` first, so a wrapper whose

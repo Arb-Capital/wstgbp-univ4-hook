@@ -125,8 +125,8 @@ Both run via the `Makefile` and exclude the test suite, deploy script, and vendo
 `ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
 to a public RPC).
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (65 tests across
-three suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (50): pricing ×
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (74 tests across
+three suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (59): pricing ×
 4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2, LP-add
 revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity,
 swap-first-routing rejection, and a red-team pass — paused-oracle preview, blacklist-bricks-pool, the
@@ -137,7 +137,7 @@ sub-par-NAV over-mint dust, round-trips that can never profit, a donated hook ba
 price and can't be drained, clean reverts at the price/`int128`/zero-amount extremes, and Permit2
 replay rejection. `test/WsgemBackstopHookInvariants.t.sol` (4): a stateful handler drives long random
 swap sequences and asserts no value extraction, the ownerless hook is never drained, quoter == execution
-every swap, and the pool never holds AMM liquidity. A standalone `test/WsgemFlippedOrderingHook.t.sol` (3)
+every swap, and the pool never holds AMM liquidity. A standalone `test/WsgemFlippedOrderingHook.t.sol` (4)
 runs end-to-end buys and sells in the **flipped** token ordering (wsgem = currency0) against mock tokens,
 proving the hook adapts when the wrapper sorts below its underlying. `script/DeployWstGBP.s.sol`
 CREATE2-mines the hook for its permission flags (`0x888`), initializes the pool (fee 0 / tickSpacing 1),

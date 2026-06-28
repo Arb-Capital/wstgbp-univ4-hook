@@ -58,9 +58,9 @@ model (the wstGBP wrapper's governance powers a swapper inherits): [`README.md`]
 | `test/base/WstGBPFixture.sol` | Concrete token fixture — tGBP/wstGBP addresses + gate/oracle storage-slot keys + NAV/spread/seed drivers; extends `ForkBase` |
 | `test/base/WsgemForkBase.sol` | v4-specific scaffolding (mine/deploy hook, pool init, settle-first swap helpers) — extends `WstGBPFixture` |
 | `test/base/WsgemAdapterForkBase.sol` | Adapter scaffolding (deploy adapter + quoter, approve-and-swap helpers) — extends `WstGBPFixture` |
-| `test/WsgemBackstopHook*.t.sol` | v4 suites — feature/regression/red-team (50), adversarial fuzz (11), stateful invariants (4) |
-| `test/WsgemFlippedOrderingHook.t.sol` | Flipped token-ordering end-to-end swaps (3) — proves the hook adapts when wsgem sorts below gem |
-| `test/adapter/WsgemDirectAdapter*.t.sol` | Adapter suites — feature/parity/hardening (21), adversarial fuzz (6), stateful invariants (3) |
+| `test/WsgemBackstopHook*.t.sol` | v4 suites — feature/regression/red-team (59), adversarial fuzz (11), stateful invariants (4) |
+| `test/WsgemFlippedOrderingHook.t.sol` | Flipped token-ordering end-to-end swaps (4) — proves the hook adapts when wsgem sorts below gem |
+| `test/adapter/WsgemDirectAdapter*.t.sol` | Adapter suites — feature/parity/hardening (39), adversarial fuzz (6), stateful invariants (3) |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
 
 ## Out of scope

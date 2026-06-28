@@ -296,6 +296,93 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         assertTrue(ok2, "executable once capacity covers the minted amount");
     }
 
+    // --- Additional edge cases: boundaries, untested gate paths, documented-but-unasserted behavior ---
+
+    /// @notice Capacity boundary: a buy whose mint lands total supply EXACTLY at `capacity()` must succeed —
+    ///         the wrapper reverts only when `totalSupply + minted > capacity`, so equality is allowed. The
+    ///         capacity test above proves only the strict-overflow revert and a within-headroom buy.
+    function test_buyToExactlyCapacitySucceeds() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 minted = amtIn * WAD / wrapper.mintcost(); // == wrapper.mint(amtIn)
+        vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + minted));
+        uint256 out = _swapIn(true, amtIn);
+        assertEq(out, minted, "minted exactly to the capacity ceiling");
+        assertEq(wrapper.totalSupply(), wrapper.capacity(), "supply now sits at capacity");
+        _assertHookClean();
+    }
+
+    /// @notice Funding boundary: the sell's funding guard is `available < needed` (strict), so a wrapper
+    ///         holding gem EXACTLY equal to the claim must pay out in full. The underfunded tests only ever
+    ///         probe `available << claim`, never the equality edge.
+    function test_sellSucceedsWhenWrapperFundedExactly() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 claim = amtIn * wrapper.burncost() / WAD;
+        deal(GEM, WSGEM, claim); // available == needed
+        uint256 t0 = _bal(GEM, address(this));
+        uint256 out = _swapIn(false, amtIn);
+        assertEq(out, claim, "received the full claim at the funding boundary");
+        assertEq(_bal(GEM, address(this)) - t0, claim, "payer received full claim");
+        assertEq(_bal(GEM, WSGEM), 0, "wrapper drained to exactly zero");
+        _assertHookClean();
+    }
+
+    /// @notice The hook has no `burnable()` pre-check — a sell when the burn market is closed reverts because
+    ///         `wrapper.redeem` reverts (bubbled through the PoolManager). The suite otherwise only covers the
+    ///         burn-closed case via `previewSwap`. Buys are unaffected by the burn gate.
+    function test_sellRevertsWhenBurnMarketClosed() public {
+        vm.store(ACT, OPEN_BURN, bytes32(type(uint256).max)); // burnable() => false
+        assertFalse(wrapper.burnable(), "burn market closed");
+        vm.expectRevert();
+        _swapIn(false, 1_000 * WAD);
+        assertGt(_swapIn(true, 1_000 * WAD), 0, "buy unaffected by the burn gate");
+    }
+
+    /// @notice Paused oracle (`pip.read() == 0`) at EXECUTION: a buy divides by the zero mintcost inside
+    ///         `wrapper.mint`, a sell hits the hook's `InvalidPrice` guard (burncost == 0). Only `previewSwap`
+    ///         covered the pause before (`test_previewSwapHandlesPausedOracle`).
+    function test_swapRevertsWhenOraclePaused() public {
+        _setNav(0);
+        vm.expectRevert(); // buy: wrapper.mint divides by the zero mintcost
+        _swapIn(true, 1_000 * WAD);
+        vm.expectRevert(); // sell: InvalidPrice (burncost == 0), bubbled through the PoolManager
+        _swapIn(false, 1_000 * WAD);
+    }
+
+    /// @notice The exact-output sell path runs its own `_requireWrapperFunded(claim)`; the existing
+    ///         underfunded test drives only the exact-in path. Under-reserve the wrapper and sell exact-out.
+    function test_sellExactOutputRevertsWhenUnderfunded() public {
+        deal(GEM, WSGEM, 1 * WAD);
+        vm.expectRevert();
+        _swapOut(false, 1_000 * WAD, type(uint256).max);
+    }
+
+    /// @notice `recipient == address(0)` is documented to route output to `msg.sender`; the router's ternary
+    ///         is not counted as a branch by coverage, so the behavior was never asserted.
+    function test_recipientZeroRoutesToSender() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 expected = quoter.quoteExactInput(true, amtIn);
+        uint256 w0 = _bal(WSGEM, address(this));
+        uint256 out = router.swapExactInput(key, true, amtIn, 0, address(0), block.timestamp);
+        assertEq(out, expected, "output amount");
+        assertEq(_bal(WSGEM, address(this)) - w0, expected, "address(0) routed output to msg.sender");
+    }
+
+    /// @notice A Permit2 router entrypoint enforces the deadline via `ensure(permit.deadline)` — a distinct
+    ///         argument source from the plain entrypoints' `deadline`. A past `permit.deadline` reverts `Expired`.
+    function test_permit2RevertsWhenExpired() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtIn = 1_000 * WAD;
+        deal(GEM, alice, amtIn);
+        vm.prank(alice);
+        IERC20Minimal(GEM).approve(PERMIT2_ADDR, type(uint256).max);
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermit(pk, GEM, amtIn, 0, block.timestamp - 1); // already expired
+        vm.prank(alice);
+        vm.expectRevert(WsgemSwapRouter.Expired.selector);
+        router.swapExactInputPermit2(key, true, amtIn, 0, alice, permit, sig);
+    }
+
     /// @notice I-02 regression: the hook caches the wrapper's immutable `act`/`pip` feed proxies at
     ///         construction and prices swaps directly off them (skipping the wrapper dispatch hop). Assert
     ///         the cached proxies equal the wrapper's and that the cached-feed prices equal the wrapper

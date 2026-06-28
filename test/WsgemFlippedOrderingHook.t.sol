@@ -132,6 +132,27 @@ contract WsgemFlippedOrderingHookTest is Test {
         _assertHookClean();
     }
 
+    /// @notice Exact-output SELL in the flipped pool: redeem for an exact gem amount paying wsgem = currency0
+    ///         (`zeroForOne == true`). Completes the flipped matrix — buy-in, sell-in and buy-out were
+    ///         covered, but the exact-output redeem path under `gemIsZero == false` was not.
+    function test_flippedOrdering_sellExactOutput() public {
+        // Acquire wsgem to sell, via a (flipped) buy.
+        router.swapExactInput(key, false, 5_000 * WAD, 0, address(this), block.timestamp);
+
+        uint256 gemOut = 1_000 * WAD;
+        uint256 inQuoted = quoter.quoteExactOutput(true, gemOut); // sell quote (zeroForOne true)
+        uint256 gemBefore = IERC20Minimal(M_GEM).balanceOf(address(this));
+        uint256 wsgemBefore = IERC20Minimal(M_WSGEM).balanceOf(address(this));
+
+        uint256 spent = router.swapExactOutput(key, true, gemOut, inQuoted + 1 * WAD, address(this), block.timestamp);
+
+        assertEq(spent, inQuoted, "quoter matches execution (flipped exact-out sell)");
+        assertEq(spent, gemOut, "1:1 at NAV 1, no spread");
+        assertEq(IERC20Minimal(M_GEM).balanceOf(address(this)) - gemBefore, gemOut, "exact gem out");
+        assertEq(wsgemBefore - IERC20Minimal(M_WSGEM).balanceOf(address(this)), spent, "wsgem spent");
+        _assertHookClean();
+    }
+
     function _assertHookClean() internal view {
         assertEq(IERC20Minimal(M_GEM).balanceOf(address(hook)), 0, "hook holds no gem");
         assertEq(IERC20Minimal(M_WSGEM).balanceOf(address(hook)), 0, "hook holds no wsgem");
