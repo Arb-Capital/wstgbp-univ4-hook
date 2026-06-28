@@ -125,8 +125,8 @@ Both run via the `Makefile` and exclude the test suite, deploy script, and vendo
 `ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
 to a public RPC).
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (78 tests across
-three suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (63): pricing ×
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (82 tests across
+five suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (63): pricing ×
 4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2 matrix,
 LP-add revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity,
 swap-first-routing rejection, and a red-team pass — paused-oracle preview, blacklist-bricks-pool
@@ -138,7 +138,12 @@ sub-par-NAV over-mint dust, round-trips that can never profit, a donated hook ba
 price and can't be drained, clean reverts at the price/`int128`/zero-amount extremes, and Permit2
 replay rejection. `test/WsgemBackstopHookInvariants.t.sol` (4): a stateful handler drives long random
 swap sequences and asserts no value extraction, the ownerless hook is never drained, quoter == execution
-every swap, and the pool never holds AMM liquidity. A standalone `test/WsgemFlippedOrderingHook.t.sol` (4)
+every swap, and the pool never holds AMM liquidity. `test/WsgemSellFloorStress.t.sol` (2) and
+`test/WsgemGasComparison.t.sol` (2) cover the swapper's economics: a multi-actor mass-exit that drains
+the wrapper's gem reserve, proving the sell floor is bounded by that reserve, reverts wholesale when short
+(no partial fill — sellers must self-fragment), and is asymmetric (buys keep filling while sells are cut
+off); and a gas comparison showing the pool route is strictly dearer than a direct `mint`/`redeem` or the
+adapter for the identical oracle price. A standalone `test/WsgemFlippedOrderingHook.t.sol` (4)
 runs end-to-end buys and sells in the **flipped** token ordering (wsgem = currency0) against mock tokens,
 proving the hook adapts when the wrapper sorts below its underlying. `script/DeployWstGBP.s.sol`
 CREATE2-mines the hook for its permission flags (`0x888`), initializes the pool (fee 0 / tickSpacing 1),
