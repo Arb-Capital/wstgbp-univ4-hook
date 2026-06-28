@@ -125,14 +125,15 @@ Both run via the `Makefile` and exclude the test suite, deploy script, and vendo
 `ETH_RPC_URL` to an archive/full RPC for a reliable fork (the suite otherwise falls back
 to a public RPC).
 
-Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (74 tests across
-three suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (59): pricing ×
-4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2, LP-add
-revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity,
-swap-first-routing rejection, and a red-team pass — paused-oracle preview, blacklist-bricks-pool, the
-hook applying no slippage of its own, callback access control, and defensive transfer/redeem/pool-guard
-coverage. `test/WsgemBackstopHookFuzz.t.sol` (11): adversarial math fuzzed across the whole oracle price
-range — quoter == execution (all four modes), exact-out ceiling with no >1-wei over-charge, bounded
+Tests fork mainnet against the **real** wstGBP/tGBP/oracle and the canonical PoolManager (78 tests across
+three suites that share `test/base/WsgemForkBase.sol`). `test/WsgemBackstopHook.t.sol` (63): pricing ×
+4, 25bps round-trip, quoter == execution + fuzz, `previewSwap` flags, router hardening + Permit2 matrix,
+LP-add revert, market-closed / underfunded / cooldown / capacity reverts, cached-feed parity,
+swap-first-routing rejection, and a red-team pass — paused-oracle preview, blacklist-bricks-pool
+(including banned output recipients), the hook applying no slippage of its own, callback access control,
+and defensive transfer/redeem/pool-guard coverage. `test/WsgemBackstopHookFuzz.t.sol` (11):
+adversarial math fuzzed across the whole oracle price range — quoter == execution (all four modes),
+exact-out ceiling with no >1-wei over-charge, bounded
 sub-par-NAV over-mint dust, round-trips that can never profit, a donated hook balance that changes no
 price and can't be drained, clean reverts at the price/`int128`/zero-amount extremes, and Permit2
 replay rejection. `test/WsgemBackstopHookInvariants.t.sol` (4): a stateful handler drives long random

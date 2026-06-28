@@ -205,6 +205,26 @@ contract WsgemDirectAdapterForkTest is WsgemAdapterForkBase {
         _assertAdapterClean();
     }
 
+    function test_permit2SellExactInput() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtIn = 2_000 * WAD;
+        IERC20Minimal(WSGEM).transfer(alice, amtIn);
+        vm.prank(alice);
+        IERC20Minimal(WSGEM).approve(PERMIT2_ADDR, type(uint256).max);
+
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermitFor(pk, address(adapter), WSGEM, amtIn, 0, block.timestamp + 1 hours);
+
+        uint256 expectedOut = adapter.quoteExactInput(WSGEM, amtIn);
+        vm.prank(alice);
+        uint256 out = adapter.swapExactInputPermit2(WSGEM, amtIn, expectedOut, alice, permit, sig);
+        assertEq(out, expectedOut, "permit2 sell output");
+        assertEq(_bal(GEM, alice), expectedOut, "alice got gem");
+        assertEq(_bal(WSGEM, alice), 0, "alice spent exact wsgem");
+        _assertAdapterClean();
+    }
+
     function test_permit2TokenMismatchReverts() public {
         uint256 pk = 0xA11CE;
         address alice = vm.addr(pk);
@@ -243,12 +263,54 @@ contract WsgemDirectAdapterForkTest is WsgemAdapterForkBase {
         _assertAdapterClean();
     }
 
+    function test_permit2SellExactOutput() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtOut = 2_000 * WAD;
+        uint256 expectedIn = adapter.quoteExactOutput(WSGEM, amtOut);
+        uint256 maxIn = expectedIn + 10 * WAD;
+        IERC20Minimal(WSGEM).transfer(alice, maxIn);
+        vm.prank(alice);
+        IERC20Minimal(WSGEM).approve(PERMIT2_ADDR, type(uint256).max);
+
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermitFor(pk, address(adapter), WSGEM, maxIn, 0, block.timestamp + 1 hours);
+
+        vm.prank(alice);
+        uint256 spent = adapter.swapExactOutputPermit2(WSGEM, amtOut, maxIn, alice, permit, sig);
+        assertEq(spent, expectedIn, "pulled exactly the computed wsgem input");
+        assertEq(_bal(GEM, alice), amtOut, "alice got exact gem");
+        assertEq(_bal(WSGEM, alice), maxIn - expectedIn, "only the exact wsgem input was pulled");
+        assertLe(_bal(GEM, address(adapter)), (wrapper.burncost() / WAD) + 1, "sell exact-output gem dust bounded");
+        assertEq(_bal(WSGEM, address(adapter)), 0, "no wsgem retained on a sell");
+    }
+
     // --- Wrapper-gated reverts ---
 
     function test_buyRevertsWhenMintMarketClosed() public {
         vm.store(ACT, OPEN_MINT, bytes32(type(uint256).max));
         vm.expectRevert();
         _adapterIn(true, 1_000 * WAD);
+    }
+
+    function test_buyRevertsWhenCapacityExceeded() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 minted = adapter.quoteExactInput(GEM, amtIn);
+        vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + minted - 1));
+        vm.expectRevert();
+        _adapterIn(true, amtIn);
+    }
+
+    function test_buyToExactlyCapacitySucceeds() public {
+        uint256 amtIn = 1_000 * WAD;
+        uint256 minted = adapter.quoteExactInput(GEM, amtIn);
+        vm.store(ACT, CAPACITY_SLOT, bytes32(wrapper.totalSupply() + minted));
+
+        uint256 out = _adapterIn(true, amtIn);
+
+        assertEq(out, minted, "minted exactly to the capacity ceiling");
+        assertEq(wrapper.totalSupply(), wrapper.capacity(), "supply now sits at capacity");
+        _assertAdapterClean();
     }
 
     function test_sellRevertsWhenWrapperUnderfunded() public {

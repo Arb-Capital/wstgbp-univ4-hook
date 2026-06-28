@@ -87,4 +87,18 @@ contract WsgemDirectAdapterFuzzTest is WsgemAdapterForkBase {
             assertLt(deliveredForLess, amtOut, "one wei less input would under-deliver (input is the fair ceiling)");
         }
     }
+
+    function testFuzz_exactOutSellNoOvercharge(uint256 nav, uint256 amtOut) public {
+        _setNav(bound(nav, NAV_LO, NAV_HI));
+        uint256 bc = wrapper.burncost();
+        amtOut = bound(amtOut, bc, SELL_CAP * bc / WAD);
+        uint256 inExact = adapter.quoteExactOutput(WSGEM, amtOut); // ceil(amtOut * WAD / burncost)
+        // The gem delivered for `inExact` wsgem is >= amtOut; charging one wei less would under-deliver.
+        uint256 deliveredFor = adapter.quoteExactInput(WSGEM, inExact);
+        assertGe(deliveredFor, amtOut, "exact-out sell input covers the requested output");
+        if (inExact > 0) {
+            uint256 deliveredForLess = adapter.quoteExactInput(WSGEM, inExact - 1);
+            assertLt(deliveredForLess, amtOut, "one wei less input would under-deliver (input is the fair ceiling)");
+        }
+    }
 }

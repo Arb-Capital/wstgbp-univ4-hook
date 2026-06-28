@@ -58,9 +58,9 @@ model (the wstGBP wrapper's governance powers a swapper inherits): [`README.md`]
 | `test/base/WstGBPFixture.sol` | Concrete token fixture — tGBP/wstGBP addresses + gate/oracle storage-slot keys + NAV/spread/seed drivers; extends `ForkBase` |
 | `test/base/WsgemForkBase.sol` | v4-specific scaffolding (mine/deploy hook, pool init, settle-first swap helpers) — extends `WstGBPFixture` |
 | `test/base/WsgemAdapterForkBase.sol` | Adapter scaffolding (deploy adapter + quoter, approve-and-swap helpers) — extends `WstGBPFixture` |
-| `test/WsgemBackstopHook*.t.sol` | v4 suites — feature/regression/red-team (59), adversarial fuzz (11), stateful invariants (4) |
+| `test/WsgemBackstopHook*.t.sol` | v4 suites — feature/regression/red-team (63), adversarial fuzz (11), stateful invariants (4) |
 | `test/WsgemFlippedOrderingHook.t.sol` | Flipped token-ordering end-to-end swaps (4) — proves the hook adapts when wsgem sorts below gem |
-| `test/adapter/WsgemDirectAdapter*.t.sol` | Adapter suites — feature/parity/hardening (39), adversarial fuzz (6), stateful invariants (3) |
+| `test/adapter/WsgemDirectAdapter*.t.sol` | Adapter suites — feature/parity/hardening (43), adversarial fuzz (7), stateful invariants (3) |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
 
 ## Out of scope
@@ -180,9 +180,9 @@ Canonical pool key: `currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSp
 
 ```bash
 forge build
-ETH_RPC_URL=<archive-or-full-rpc> make test          # 91 fast tests (v4 64 + adapter 27); public RPC if unset
+ETH_RPC_URL=<archive-or-full-rpc> make test          # 128 fast tests (v4 78 + adapter 50); public RPC if unset
 make test-invariant                                  # the 7 stateful fork invariants only (v4 4 + adapter 3, ~10 min)
-make test-all                                         # all 98 (a bare `forge test -vv` also runs the slow suites)
+make test-all                                         # all 135 (a bare `forge test -vv` also runs the slow suites)
 ```
 
 Tests fork mainnet against the real wstGBP/tGBP/oracle and the canonical PoolManager; the hook is

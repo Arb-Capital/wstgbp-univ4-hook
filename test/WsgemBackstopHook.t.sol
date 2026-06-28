@@ -154,6 +154,14 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         assertEq(_bal(GEM, address(this)), t0 - q, "surplus refunded");
     }
 
+    function test_exactOutputSellRefundsSurplusToPayer() public {
+        uint256 amtOut = 1_000 * WAD;
+        uint256 q = quoter.quoteExactOutput(false, amtOut);
+        uint256 w0 = _bal(WSGEM, address(this));
+        assertEq(_swapOut(false, amtOut, q + 5_000 * WAD), q, "spent == quote");
+        assertEq(w0 - _bal(WSGEM, address(this)), q, "surplus wsgem refunded");
+    }
+
     // --- Guards ---
 
     function test_addLiquidityReverts() public {
@@ -486,6 +494,27 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         assertEq(_bal(GEM, alice), 0, "alice spent exact gem via permit2 (no router approval)");
     }
 
+    function test_permit2_sellExactInput() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtIn = 1_000 * WAD;
+        address permit2 = address(router.PERMIT2()); // resolve before pranking (it's an external call)
+        IERC20Minimal(WSGEM).transfer(alice, amtIn);
+        vm.prank(alice);
+        IERC20Minimal(WSGEM).approve(permit2, type(uint256).max);
+
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermit(pk, WSGEM, amtIn, 0, block.timestamp + 1 hours);
+
+        uint256 expectedOut = quoter.quoteExactInput(false, amtIn);
+        vm.prank(alice);
+        uint256 out = router.swapExactInputPermit2(key, false, amtIn, expectedOut, alice, permit, sig);
+
+        assertEq(out, expectedOut, "permit2 sell == backstop price");
+        assertEq(_bal(GEM, alice), expectedOut, "alice received gem");
+        assertEq(_bal(WSGEM, alice), 0, "alice spent exact wsgem via permit2");
+    }
+
     function test_permit2_sellExactOutput() public {
         uint256 pk = 0xA11CE; // a code-free EOA (Permit2 uses ecrecover, not EIP-1271)
         address bob = vm.addr(pk);
@@ -508,6 +537,28 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         assertEq(spent, expectedIn, "permit2 sell input == backstop price");
         assertEq(_bal(GEM, bob), tOut, "bob received exact gem");
         assertEq(w0 - _bal(WSGEM, bob), spent, "permit2 surplus refunded to bob");
+    }
+
+    function test_permit2_buyExactOutput() public {
+        uint256 pk = 0xA11CE;
+        address alice = vm.addr(pk);
+        uint256 amtOut = 1_000 * WAD;
+        uint256 expectedIn = quoter.quoteExactOutput(true, amtOut);
+        uint256 maxIn = expectedIn + 5 * WAD;
+        address permit2 = address(router.PERMIT2()); // resolve before pranking (it's an external call)
+        deal(GEM, alice, maxIn);
+        vm.prank(alice);
+        IERC20Minimal(GEM).approve(permit2, type(uint256).max);
+
+        (ISignatureTransfer.PermitTransferFrom memory permit, bytes memory sig) =
+            _signPermit(pk, GEM, maxIn, 0, block.timestamp + 1 hours);
+
+        vm.prank(alice);
+        uint256 spent = router.swapExactOutputPermit2(key, true, amtOut, maxIn, alice, permit, sig);
+
+        assertEq(spent, expectedIn, "permit2 buy input == backstop price");
+        assertEq(_bal(WSGEM, alice), amtOut, "alice received exact wsgem");
+        assertEq(_bal(GEM, alice), maxIn - expectedIn, "permit2 surplus refunded to alice");
     }
 
     // --- Tiny exact-out reverts on the pure backstop (F3 / C7) ---
@@ -558,6 +609,16 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
         vm.mockCall(cop, abi.encodeWithSignature("pass(address)", address(PM)), abi.encode(false));
         vm.expectRevert();
         _swapIn(true, 1_000 * WAD);
+    }
+
+    function test_blacklistedRecipientCannotReceiveWsgemBuy() public {
+        address cop = IHasCop(WSGEM).cop();
+        address bannedRecipient = address(0xBADBEEF);
+
+        vm.mockCall(cop, abi.encodeWithSignature("pass(address)", bannedRecipient), abi.encode(false));
+        vm.expectRevert();
+        router.swapExactInput(key, true, 1_000 * WAD, 0, bannedRecipient, block.timestamp);
+        vm.clearMockedCalls();
     }
 
     /// @notice M-02 (red-team): the hook executes at the live oracle price with NO intrinsic slippage or
