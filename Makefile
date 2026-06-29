@@ -33,14 +33,24 @@ fmt   :; forge fmt
 deploy-dry :; forge script script/DeployWstGBP.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
 
 # Mainnet deploy: mines + CREATE2-deploys the hook (asserts address + I-02 feed parity), initializes
-# the pool, deploys the router + quoter, and verifies all three on Etherscan. `--slow` waits for each
-# tx to confirm before sending the next (the CREATE2 deploy must land before the pool init references
-# it). Requires: ETH_RPC_URL, PK (deployer key), ETHERSCAN_API_KEY. Run `make deploy-dry` first.
+# the pool, deploys the router + quoter + direct adapter, and verifies all four on Etherscan. `--slow`
+# waits for each tx to confirm before sending the next (the CREATE2 deploy must land before the pool init
+# references it). Signs from an encrypted keystore (`--keystore` + `--sender`, like ../maseer-one) — forge
+# prompts for the keystore password; no raw private key on the command line or in the environment.
+# Requires: ETH_RPC_URL, ETH_FROM (deployer address), ETH_KEYSTORE (keystore JSON path), ETHERSCAN_API_KEY.
+# Optional: ETH_PRIO_FEE → --priority-gas-price (maxPriorityFeePerGas) and ETH_GAS_PRICE → --with-gas-price
+# (maxFeePerGas); when unset, forge auto-estimates gas. (../maseer-one maps ETH_GAS_PRICE to --base-fee,
+# but that sets the *simulated* block base fee, not the broadcast tx fee — --with-gas-price is the tx knob.)
+# Run `make deploy-dry` first.
 deploy :
 	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
-	@test -n "$(PK)" || { echo "PK (deployer private key) is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
 	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required for --verify"; exit 1; }
-	forge script script/DeployWstGBP.s.sol --rpc-url $(ETH_RPC_URL) --private-key $(PK) \
+	forge script script/DeployWstGBP.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
 		--broadcast --slow --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
 
 clean :; forge clean

@@ -139,8 +139,8 @@ after the AMM, or the whole swap when there's no LP) settles per case:
 
 Flag bits encode the permissions, so the address must be **mined** (CREATE2). Backstop:
 `beforeSwap` + `beforeSwapReturnDelta` + `beforeAddLiquidity` (revert) = **`0x888`**, pool fee 0 /
-tickSpacing 1. `script/DeployWstGBP.s.sol` mines + deploys the hook plus the router + quoter, and asserts
-the hook's cached `act`/`pip` feed proxies match the wrapper's (I-02). The hook is ownerless and holds
+tickSpacing 1. `script/DeployWstGBP.s.sol` mines + deploys the hook plus the router + quoter + direct
+adapter, and asserts the hook's cached `act`/`pip` feed proxies match the wrapper's (I-02). The hook is ownerless and holds
 no capital. Ensure the hook address is not on the tGBP ban list.
 
 ## Integration: quoting & swapping
@@ -182,7 +182,7 @@ make coverage                                             # first-party src cove
 make gen-report                                           # + HTML report → docs/coverage-report/ (gitignored); needs lcov/genhtml
 make serve-report                                         # serve report at localhost:8000 (Flatpak/Snap browsers can't load file:// CSS via the doc portal)
 make deploy-dry                                           # simulate the deploy on a mainnet fork (no broadcast, no key)
-ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy   # broadcast + --slow + Etherscan verify
+ETH_RPC_URL=<rpc> ETH_FROM=<deployer> ETH_KEYSTORE=<keystore.json> ETHERSCAN_API_KEY=<key> make deploy   # broadcast + --slow + Etherscan verify (keystore-signed)
 ```
 
 Tests fork mainnet and run against the **real** wstGBP/tGBP/oracle and the canonical PoolManager; the

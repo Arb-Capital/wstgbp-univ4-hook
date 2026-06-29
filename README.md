@@ -105,7 +105,7 @@ make test-invariant                                  # the slow stateful fork in
 make test-all                                         # everything, incl. the invariant suite (a bare `forge test` also does)
 forge test --match-test test_buyExactInput -vvv      # single test
 make deploy-dry                                      # simulate the deploy on a mainnet fork (no broadcast, no key)
-ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy   # broadcast + --slow + Etherscan verify
+ETH_RPC_URL=<rpc> ETH_FROM=<deployer> ETH_KEYSTORE=<keystore.json> ETHERSCAN_API_KEY=<key> make deploy   # keystore-signed broadcast + --slow + Etherscan verify
 ```
 
 ### Coverage (requires `lcov` / `genhtml`)
@@ -148,4 +148,4 @@ adapter for the identical oracle price. A standalone `test/WsgemFlippedOrderingH
 runs end-to-end buys and sells in the **flipped** token ordering (wsgem = currency0) against mock tokens,
 proving the hook adapts when the wrapper sorts below its underlying. `script/DeployWstGBP.s.sol`
 CREATE2-mines the hook for its permission flags (`0x888`), initializes the pool (fee 0 / tickSpacing 1),
-and deploys the router + quoter; the hook address must not be on the tGBP/wstGBP ban list.
+and deploys the router + quoter + direct adapter; the hook address must not be on the tGBP/wstGBP ban list.

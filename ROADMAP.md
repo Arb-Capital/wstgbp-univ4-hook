@@ -64,8 +64,8 @@ v4 was the special case (settle-first + mined flags). Per-aggregator effort is *
       v4's `Pool.swap` to the backstop edge + priced the residual at the oracle (exact hybrid blend,
       fuzz-validated). Removed from the tree with the hybrid; preserved at `b7a5c5a`.
 - [x] Deploy script — `script/DeployWstGBP.s.sol`: CREATE2-mines the backstop flags `0x888`, pool init
-      fee 0 / tickSpacing 1, deploys router + quoter, and asserts the hook's cached `act`/`pip` feed
-      proxies equal the wrapper's (I-02).
+      fee 0 / tickSpacing 1, deploys router + quoter + direct adapter, and asserts the hook's cached
+      `act`/`pip` feed proxies equal the wrapper's (I-02).
 - [x] Mainnet-fork tests (65 across three suites, all sharing `test/base/WsgemForkBase.sol`):
       `WsgemBackstopHook.t.sol` (50) — pricing, router hardening + Permit2, quoter + `previewSwap`,
       guards, capacity (L-02), cached-feed parity (I-02), swap-first rejection, currency-ordering adaptation;

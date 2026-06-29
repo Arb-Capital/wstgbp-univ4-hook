@@ -21,9 +21,9 @@ import {Iwsgem} from "../src/core/interfaces/Iwsgem.sol";
 ///         pool). Asserts the I-02 cached-feed parity for the hook, the quoter, AND the adapter, and that
 ///         the adapter is not on the tGBP ban list (it becomes the mint/redeem caller).
 ///
-/// Usage: ETH_RPC_URL=<rpc> PK=<key> ETHERSCAN_API_KEY=<key> make deploy
-///        (forge script script/DeployWstGBP.s.sol --rpc-url $ETH_RPC_URL --private-key $PK
-///         --broadcast --slow --verify --etherscan-api-key $ETHERSCAN_API_KEY)
+/// Usage: ETH_RPC_URL=<rpc> ETH_FROM=<deployer> ETH_KEYSTORE=<keystore.json> ETHERSCAN_API_KEY=<key> make deploy
+///        (forge script script/DeployWstGBP.s.sol --rpc-url $ETH_RPC_URL --sender $ETH_FROM
+///         --keystore $ETH_KEYSTORE --broadcast --slow --verify --etherscan-api-key $ETHERSCAN_API_KEY)
 ///
 /// @dev This is the concrete, token-specific deploy: it pins the tGBP/wstGBP addresses. Future pairs get
 ///      their own sibling deploy script — the core `Wsgem*` contracts are generic and pair-agnostic.
