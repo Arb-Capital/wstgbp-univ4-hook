@@ -39,6 +39,22 @@ tGBP `0x27f6…` < wstGBP `0x57C3…`, so in the pool **currency0 = tGBP, curren
 `zeroForOne == true` is a **BUY** of wstGBP, `false` is a **SELL**. Both tokens are 18 decimals;
 all prices are WAD (1e18) tGBP-per-wstGBP.
 
+### Deployed system (mainnet, 2026-06-28)
+
+CREATE2-mined hook (flags `0x888`); all four ownerless and hold no capital. Deployed by
+`script/DeployWstGBP.s.sol`.
+
+| Contract | Address |
+|---|---|
+| `WsgemBackstopHook` (the hook) | `0xfE36B48c9c0240991E4CEf006a2445F2ff524888` |
+| `WsgemSwapRouter` (v4 settle-first router) | `0x21734507fDca48A3b4e8C496280b63a37D3bD0C8` |
+| `WsgemQuoter` (backstop quoter) | `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee` |
+| `WsgemDirectAdapter` (aggregator / CoW adapter) | `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23` |
+
+The pool is initialized in the PoolManager (v4 singleton — no pool address); `poolId` =
+`0xdb21c31f461611ebeeab8af1280c77a82bb81725e1bf9d6093fbbc207a375ce5` (`keccak256(abi.encode(PoolKey))`
+over currency0=tGBP, currency1=wstGBP, fee 0, tickSpacing 1, hook above), started at `sqrtPriceX96 = 1:1`.
+
 ## wstGBP wrapper mechanics (reference source: `../maseer-one/src`, read-only)
 
 - `mint(uint256 amtTgbpIn) returns (uint256 wstOut)` — pulls `amtTgbpIn` tGBP from `msg.sender`

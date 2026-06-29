@@ -6,6 +6,7 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
@@ -28,6 +29,8 @@ import {Iwsgem} from "../src/core/interfaces/Iwsgem.sol";
 /// @dev This is the concrete, token-specific deploy: it pins the tGBP/wstGBP addresses. Future pairs get
 ///      their own sibling deploy script — the core `Wsgem*` contracts are generic and pair-agnostic.
 contract DeployWstGBP is Script {
+    using PoolIdLibrary for PoolKey;
+
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address internal constant WSTGBP = 0x57C3571f10767E49C9d7b60feb6c67804783B7aE;
@@ -105,6 +108,8 @@ contract DeployWstGBP is Script {
         console2.log("WsgemDirectAdapter: ", address(adapter));
         console2.log("currency0 (tGBP):    ", tgbp);
         console2.log("currency1 (wstGBP):  ", WSTGBP);
+        // v4 is a singleton: the pool has no address, only this poolId = keccak256(abi.encode(key)).
+        console2.log("PoolId:             ", vm.toString(PoolId.unwrap(key.toId())));
         console2.log("Pool initialized. v4: swap via WsgemSwapRouter (settle-first).");
         console2.log("Aggregators/CoW: swap via WsgemDirectAdapter (approve + swap).");
     }

@@ -174,7 +174,19 @@ The audited commits (no top-level lockfile beyond submodule pins):
 | v4 PoolManager | `0x000000000004444c5dc75cB358380D2e3dE08A90` |
 
 Canonical pool key: `currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSpacing = 1`,
-`hooks = <CREATE2-mined hook, flags 0x888>`.
+`hooks = 0xfE36B48c9c0240991E4CEf006a2445F2ff524888` (CREATE2-mined, flags `0x888`).
+
+### Deployed contracts (mainnet, 2026-06-28)
+
+| Contract | Address |
+|---|---|
+| `WsgemBackstopHook` | `0xfE36B48c9c0240991E4CEf006a2445F2ff524888` |
+| `WsgemSwapRouter` | `0x21734507fDca48A3b4e8C496280b63a37D3bD0C8` |
+| `WsgemQuoter` | `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee` |
+| `WsgemDirectAdapter` | `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23` |
+
+Pool (v4 singleton — no address) `poolId` = `0xdb21c31f461611ebeeab8af1280c77a82bb81725e1bf9d6093fbbc207a375ce5`,
+initialized at `sqrtPriceX96 = 1:1`.
 
 ## Build / test
 

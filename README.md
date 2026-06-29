@@ -64,8 +64,9 @@ at that block; the hook does not sanity-check it.
 - **Pin the canonical `PoolKey`** (security-audit I-01). The router and quoter are intentionally generic
   over `PoolKey`; the hook validates only the two currencies, not the fee, tick spacing, or hook address.
   Integrators, bots, and frontends must hardcode/validate the canonical key
-  (`currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSpacing = 1`, `hooks = <deployed hook>`) and
-  must never route through a user- or route-supplied key. The deploy script logs the canonical key.
+  (`currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSpacing = 1`,
+  `hooks = 0xfE36B48c9c0240991E4CEf006a2445F2ff524888`) and must never route through a user- or
+  route-supplied key. The deploy script logs the canonical key.
 
 ### What integrators should monitor
 
@@ -79,6 +80,29 @@ at that block; the hook does not sanity-check it.
   upgrades. `wstGBP` itself is not upgradeable.
 - The **ban list** (`cop` / its guard source) — keep the hook, the PoolManager, and your recipients
   off it.
+
+### Deployed contracts (mainnet)
+
+Deployed 2026-06-28. The hook is CREATE2-mined for its permission flags (`0x888`); all four are
+ownerless and hold no capital.
+
+| Contract | Address |
+|---|---|
+| `WsgemBackstopHook` (the hook) | `0xfE36B48c9c0240991E4CEf006a2445F2ff524888` |
+| `WsgemSwapRouter` (v4 settle-first router) | `0x21734507fDca48A3b4e8C496280b63a37D3bD0C8` |
+| `WsgemQuoter` (backstop quoter) | `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee` |
+| `WsgemDirectAdapter` (aggregator / CoW adapter) | `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23` |
+
+The pool itself has no address — v4 is a singleton, so it lives inside the PoolManager keyed by
+`poolId = keccak256(abi.encode(PoolKey))`:
+
+| Pool | poolId |
+|---|---|
+| tGBP/wstGBP (fee 0, tickSpacing 1, hook `0xfE36…4888`) | `0xdb21c31f461611ebeeab8af1280c77a82bb81725e1bf9d6093fbbc207a375ce5` |
+
+Swap on v4 through `WsgemSwapRouter` (settle-first); DEX aggregators / CoW solvers route through
+`WsgemDirectAdapter` (`approve` + swap). Quote off-chain from `wstGBP.mintcost()`/`burncost()` or
+on-chain via `WsgemQuoter`.
 
 ### Key mainnet addresses
 

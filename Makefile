@@ -29,8 +29,12 @@ fmt   :; forge fmt
 # Simulate the full deploy against live mainnet state — no broadcast, no key, nothing sent. Exercises
 # the mine + mined-address assert + I-02 feed-parity asserts + pool init end-to-end and writes the
 # planned txs to broadcast/DeployWstGBP.s.sol/1/dry-run/. Falls back to a public RPC if ETH_RPC_URL is
-# unset (same as the test suite).
-deploy-dry :; forge script script/DeployWstGBP.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+# unset (same as the test suite). `env -u` drops any exported ETH_FROM/ETH_KEYSTORE (set for `make deploy`)
+# so the keyless simulation doesn't try to unlock a keystore and fail at `vm.startBroadcast()`.
+# NOTE: on a fork where the hook already exists, HookMiner skips the live address and mines the *next*
+# salt, so the logged hook/PoolId here differ from the deployed ones — that's expected (a re-deploy makes
+# a fresh pool). The deployed contracts remain reproducible from this source (runtime bytecode matches).
+deploy-dry :; env -u ETH_FROM -u ETH_KEYSTORE forge script script/DeployWstGBP.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
 
 # Mainnet deploy: mines + CREATE2-deploys the hook (asserts address + I-02 feed parity), initializes
 # the pool, deploys the router + quoter + direct adapter, and verifies all four on Etherscan. `--slow`

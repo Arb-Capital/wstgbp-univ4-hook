@@ -5,6 +5,11 @@ See `CLAUDE.md` for the full design; this file is just status + what's left.
 
 Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
 
+**Deployed to mainnet 2026-06-28** — hook `0xfE36B48c9c0240991E4CEf006a2445F2ff524888`, router
+`0x21734507fDca48A3b4e8C496280b63a37D3bD0C8`, quoter `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee`,
+adapter `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23`. Full table in `README.md` / `AUDIT_SCOPE.md` /
+`CLAUDE.md`. Remaining: off-chain aggregator/CoW listing (below).
+
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 
 Only **one** hook goes to external audit / mainnet, and it is **`WsgemBackstopHook`** (pure backstop,
