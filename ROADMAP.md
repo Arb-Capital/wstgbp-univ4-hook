@@ -48,10 +48,47 @@ v4 was the special case (settle-first + mined flags). Per-aggregator effort is *
       extraction, bounded dust, quoter==exec). Now **98 tests** total (91 fast + 7 invariant).
 - [x] Deploy wiring: `DeployWstGBP.s.sol` also deploys the adapter, asserts its I-02 cached-feed parity, and
       checks it is not ban-listed. `deploy-dry` validated end-to-end on a mainnet fork.
-- [ ] **Off-chain listing (per venue, no Solidity):** CoW DAO forum route-integration proposal (documented
-      swap+quote interface + price discovery — the adapter view or an API); Paraswap `paraswap-dex-lib`
-      adapter PR; Odos / LI.FI partnership registration. All reuse the *same* deployed adapter.
+- [~] **Off-chain listing (per venue, no Solidity):** step-by-step playbook now in
+      **[`docs/AGGREGATOR_LISTINGS.md`](docs/AGGREGATOR_LISTINGS.md)** (2026-07-03): ParaSwap =
+      self-serve `paraswap-dex-lib` PR (templates: `wsteth` constant-price + `lite-psm` caps); Odos =
+      Discord request with the info packet; LI.FI = automatic downstream (its exchange list is
+      aggregators incl. paraswap/odos — verified via li.quest/v1/tools); CoW = forum proposal
+      (`docs/COW_ROUTE_INTEGRATION.md`, drafted). Remaining: execute them. All reuse the *same*
+      deployed adapter.
 - [ ] **Repo rename** off `-univ4-hook` (e.g. `wstGBP-venues`) — name only, do when convenient.
+
+## Decision (2026-07-03): CoW Hook Store dapp via an owner-bound helper
+
+Second CoW track (complements route integration above, which serves *solvers*): a **Hook Store dapp**
+lets CoW Swap *users* attach wrap/unwrap to any order (post-hook "wrap proceeds into wstGBP", pre-hook
+"unwrap wstGBP to fund a tGBP sell"). Key mechanics (docs tracked in `CLAUDE.md`): hooks are
+`{target, callData, gasLimit}` in appData, executed by the public untrusted **HooksTrampoline** — so the
+target must be safe under arbitrary callers, and `WsgemDirectAdapter` cannot be it (pulls from
+`msg.sender`; the trampoline holds nothing). Chosen design: **`WsgemHookHelper`**, owner-bound (anyone
+may call; funds flow only owner→owner at oracle price, capped by the owner's allowance — bounded
+griefing, no extraction) over the CoW-Shed proxy pattern (more moving parts, needs delegatecall helpers
+anyway). The web dapp lives in a **separate repo** (ecosystem convention; keeps this repo pure Foundry).
+
+- [x] `src/adapter/WsgemHookHelper.sol` — `wrapAll` (min(balance, allowance) sweep — post-hook proceeds
+      vary with surplus), `unwrap` (fixed amount), `unwrapAll`; same sell guards as the adapter via
+      `WsgemWrap`; `Wrap`/`Unwrap` events carry owner + executor.
+- [x] Tests: `test/adapter/WsgemHookHelper.t.sol` (21 — quoter parity, sweep caps,
+      arbitrary-caller-cannot-redirect-or-extract, wrapper-gated + defensive reverts) +
+      `WsgemHookHelperFuzz.t.sol` (4 — NAV-range parity + forced-round-trip-never-profits).
+- [x] Deploy: `script/DeployHookHelper.s.sol` (plain CREATE + I-02 + ban-list asserts);
+      `make deploy-hook-helper[-dry]`. Dry-run validated on a mainnet fork. `AUDIT_SCOPE.md` updated
+      (flagged as a post-review scope addition).
+- [ ] **Deploy the helper to mainnet** (user-run keystore flow) and record the address here + `CLAUDE.md`.
+- [ ] **Hook dapp repo** (`wsgem-cow-hooks` or similar): Vite+TS iframe app on
+      `@cowprotocol/hook-dapp-lib` (manifest.json, wrap/unwrap modes via `context.isPreHook`,
+      exact-approval flow, quotes off `act`/`pip`), hosted at a stable URL (Vercel).
+- [ ] **E2E** via CoW Swap → Hooks → "My Custom Hooks" (paste dapp URL) with small mainnet orders both
+      directions (tGBP is mainnet-only).
+- [ ] **Hook Store listing PR** to `cowprotocol/cowswap`: `IFRAME` entry in
+      `libs/hook-dapp-lib/src/hookDappsRegistry.ts`.
+- [~] **Track B route-integration doc** — `docs/COW_ROUTE_INTEGRATION.md` drafted (interface, price
+      discovery, gating, gas, compliance + forum-post skeleton); remaining: post it on the CoW DAO forum
+      (the solver-side listing item above).
 
 ## Done
 

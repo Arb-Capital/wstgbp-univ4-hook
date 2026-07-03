@@ -11,7 +11,7 @@ COVERAGE_EXCLUDE := (test/|script/|src/v4/base/)
 # (`WsgemDirectAdapterInvariants`) suites are covered wherever their files live.
 INVARIANT_MATCH := Invariants
 
-.PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry snapshot snapshot-check
+.PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry deploy-hook-helper deploy-hook-helper-dry snapshot snapshot-check
 
 build :; forge build
 
@@ -52,6 +52,23 @@ deploy :
 	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
 	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required for --verify"; exit 1; }
 	forge script script/DeployWstGBP.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --slow --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
+
+# Simulate the CoW-hooks helper deploy against live mainnet state — no broadcast, no key (same shape as
+# deploy-dry; plain CREATE, so no miner and re-runs are harmless).
+deploy-hook-helper-dry :; env -u ETH_FROM -u ETH_KEYSTORE forge script script/DeployHookHelper.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+# Deploy the `WsgemHookHelper` (owner-bound CoW-hook wrap/unwrap target) after the v1 system: plain
+# CREATE + I-02 feed-parity + ban-list asserts + Etherscan verify. Same keystore signing as `make deploy`.
+deploy-hook-helper :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required for --verify"; exit 1; }
+	forge script script/DeployHookHelper.s.sol --rpc-url $(ETH_RPC_URL) \
 		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
 		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
 		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \

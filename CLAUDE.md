@@ -90,6 +90,7 @@ As of 2026-06-12 the repo holds **two swap venues** over the same wstGBP `mint`/
   (Odos / LI.FI / Paraswap) and CoW Protocol solvers. Standard swap-then-settle semantics, exact-in/out +
   Permit2 + view quotes, direction inferred from `tokenIn`. Same rounding/redeem-safety/funding/cooldown
   guards as the hook (via `WsgemWrap`); cross-venue parity tests pin adapter == quoter == hook math.
+  Also holds `WsgemHookHelper.sol` (2026-07-03) — the owner-bound wrap/unwrap target for CoW hooks (below).
 
 **Why an adapter and not "a CoW hook":** CoW Hooks are user-attached pre/post *interactions* on an order,
 **not** a liquidity source solvers route through. To give solvers a route you expose a normal swap contract
@@ -97,6 +98,38 @@ As of 2026-06-12 the repo holds **two swap venues** over the same wstGBP `mint`/
 the same standard `approve → swap` adapter also satisfies Odos/LI.FI/Paraswap. v4 was the special case
 (settle-first + mined flags); everything else just calls the adapter. Per-aggregator work is off-chain
 **listing**, not new Solidity. Monorepo + one generic adapter was the chosen design (see [`ROADMAP.md`](ROADMAP.md)).
+
+### CoW hooks (the user-facing track) — reference docs + mechanics
+
+Distinct from solver route integration: a **Hook Store dapp** lets CoW Swap *users* attach wrap/unwrap
+actions to their orders. Reference docs (verified 2026-07-03):
+
+- Concepts: <https://docs.cow.fi/cow-protocol/concepts/order-types/cow-hooks> — pre-hooks run before
+  settlement pulls the sell token; post-hooks after proceeds reach receivers. **Weak guarantee**: solver
+  social consensus only; an order can fill even if its hook reverted — design so a skipped hook loses nothing.
+- Mechanics: <https://docs.cow.fi/cow-protocol/reference/core/intents/hooks> — hooks are
+  `{target, callData, gasLimit}` in the order's appData, executed via the **HooksTrampoline**, which is
+  public and untrusted (anyone can call it, and hook callData is public) — a hook target must be safe
+  under arbitrary callers/args. This is why `WsgemDirectAdapter` can't be a target (pulls from
+  `msg.sender`; the trampoline holds no funds) and why `WsgemHookHelper` is owner-bound: anyone may
+  trigger it, but funds flow only owner→owner at oracle price, capped by the owner's allowance
+  (`wrapAll` sweeps `min(balance, allowance)` — post-hook proceeds vary with surplus, so the amount
+  resolves at execution time).
+- Building a hook dapp: <https://docs.cow.fi/cow-protocol/tutorials/hook-dapp> — iframe web app on
+  `@cowprotocol/hook-dapp-lib` (`initCoWHookDapp` → context `{chainId, account, orderParams, isPreHook,
+  hookToEdit}` → `actions.addHook`), plus a `manifest.json` (id = keccak256 of name, descriptions,
+  image, `conditions.supportedNetworks` / optional `position`). Hosted externally at its own URL;
+  testable unlisted via CoW Swap → Hooks → "My Custom Hooks" (paste the URL).
+- Hook Store overview: <https://cowswap.mintlify.app/cow-swap/hooks/hook-store>; **listing** = PR to
+  `cowprotocol/cowswap` adding a `type: 'IFRAME'` entry to `libs/hook-dapp-lib/src/hookDappsRegistry.ts`
+  (see the bleu entries there for the shape; their dapps live in the standalone `bleu/cow-hooks-dapps`
+  repo, deployed on Vercel — our dapp likewise lives in its own repo, not here).
+- CoW Shed (`cowdao-grants/cow-shed`): the per-user proxy pattern for fund-moving hooks (EIP-712-signed
+  calls, supports delegatecall). Evaluated and **not** used — the owner-bound helper is simpler (one
+  approval, EOA-friendly, no proxy deploy) with the same bounded-griefing worst case.
+
+Deploy the helper with `make deploy-hook-helper` (dry: `make deploy-hook-helper-dry`); status + open
+items in [`ROADMAP.md`](ROADMAP.md) ("Decision (2026-07-03)").
 
 ## The hook design (the important part)
 

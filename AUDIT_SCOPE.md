@@ -48,6 +48,7 @@ model (the wstGBP wrapper's governance powers a swapper inherits): [`README.md`]
 | File | Role |
 |---|---|
 | `src/adapter/WsgemDirectAdapter.sol` | Standalone, ownerless, inventory-free `approve → swap` venue calling `wstGBP.mint`/`redeem` directly. exact-in/out + Permit2 + view quotes. Direction inferred from `tokenIn`. Same rounding/redeem-safety/funding/cooldown guards as the hook, via `WsgemWrap`. |
+| `src/adapter/WsgemHookHelper.sol` | **Scope addition 2026-07-03 (post-review surface — flag to the auditor).** Owner-bound wrap/unwrap target for CoW Protocol hooks: callable by anyone (the CoW HooksTrampoline is public/untrusted), pulls only what the owner approved (`min(balance, allowance)` sweeps or a fixed amount) and ALWAYS pays the output back to that owner at the wrapper's oracle prices. Worst case for an arbitrary caller: fair-price forced conversion of the approved amount, delivered to the owner (bounded griefing, no extraction). Same sell guards as the adapter, via `WsgemWrap`. |
 
 **Deploy + tests + config:**
 
@@ -61,6 +62,8 @@ model (the wstGBP wrapper's governance powers a swapper inherits): [`README.md`]
 | `test/WsgemBackstopHook*.t.sol` | v4 suites — feature/regression/red-team (63), adversarial fuzz (11), stateful invariants (4) |
 | `test/WsgemFlippedOrderingHook.t.sol` | Flipped token-ordering end-to-end swaps (4) — proves the hook adapts when wsgem sorts below gem |
 | `test/adapter/WsgemDirectAdapter*.t.sol` | Adapter suites — feature/parity/hardening (43), adversarial fuzz (7), stateful invariants (3) |
+| `test/adapter/WsgemHookHelper*.t.sol` | CoW-hook helper suites — feature/parity/trust-model (21: quoter parity, allowance/balance-capped sweeps, arbitrary-caller-cannot-redirect-or-extract, wrapper-gated + defensive reverts), NAV-range fuzz (4) |
+| `script/DeployHookHelper.s.sol` | Plain-CREATE deploy of the CoW-hook helper (post-v1 addition) + I-02 feed assertion + ban-list check |
 | `foundry.toml`, `remappings.txt` | Build/toolchain config |
 
 ## Out of scope
