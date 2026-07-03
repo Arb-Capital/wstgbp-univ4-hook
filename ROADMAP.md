@@ -7,8 +7,9 @@ Status: `[x]` done · `[ ]` todo · `[~]` partial/in-progress
 
 **Deployed to mainnet 2026-06-28** — hook `0xfE36B48c9c0240991E4CEf006a2445F2ff524888`, router
 `0x21734507fDca48A3b4e8C496280b63a37D3bD0C8`, quoter `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee`,
-adapter `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23`. Full table in `README.md` / `AUDIT_SCOPE.md` /
-`CLAUDE.md`. Remaining: off-chain aggregator/CoW listing (below).
+adapter `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23`; hook helper (2026-07-03)
+`0x4F93a2E29B0AA75875Ab922d780B6dc59b415B6A`. Full table in `README.md` / `AUDIT_SCOPE.md` /
+`CLAUDE.md`. Remaining: off-chain aggregator/CoW listing + the CoW hook dapp (below).
 
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 
@@ -78,10 +79,14 @@ anyway). The web dapp lives in a **separate repo** (ecosystem convention; keeps 
 - [x] Deploy: `script/DeployHookHelper.s.sol` (plain CREATE + I-02 + ban-list asserts);
       `make deploy-hook-helper[-dry]`. Dry-run validated on a mainnet fork. `AUDIT_SCOPE.md` updated
       (flagged as a post-review scope addition).
-- [ ] **Deploy the helper to mainnet** (user-run keystore flow) and record the address here + `CLAUDE.md`.
-- [ ] **Hook dapp repo** (`wsgem-cow-hooks` or similar): Vite+TS iframe app on
+- [x] **Deployed to mainnet 2026-07-03** — `WsgemHookHelper` at
+      `0x4F93a2E29B0AA75875Ab922d780B6dc59b415B6A` (block 25453990, tx
+      `0xefbc09e193942a2dc3c35360d95e2339a9601d3ab66b594cb738ec1f924b08d9`, Etherscan-verified).
+      Recorded in `CLAUDE.md` / `README.md` / `AUDIT_SCOPE.md`.
+- [~] **Hook dapp repo** — `../wsgem-cow-hooks`: Vite+TS iframe app on
       `@cowprotocol/hook-dapp-lib` (manifest.json, wrap/unwrap modes via `context.isPreHook`,
-      exact-approval flow, quotes off `act`/`pip`), hosted at a stable URL (Vercel).
+      exact-approval flow, quotes off `act`/`pip`). Built; `src/config.ts` now carries the deployed
+      helper address. Remaining: host at a stable URL (Vercel) + absolute manifest image URL.
 - [ ] **E2E** via CoW Swap → Hooks → "My Custom Hooks" (paste dapp URL) with small mainnet orders both
       directions (tGBP is mainnet-only).
 - [ ] **Hook Store listing PR** to `cowprotocol/cowswap`: `IFRAME` entry in

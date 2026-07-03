@@ -41,8 +41,9 @@ all prices are WAD (1e18) tGBP-per-wstGBP.
 
 ### Deployed system (mainnet, 2026-06-28)
 
-CREATE2-mined hook (flags `0x888`); all four ownerless and hold no capital. Deployed by
-`script/DeployWstGBP.s.sol`.
+CREATE2-mined hook (flags `0x888`); all five ownerless and hold no capital. First four deployed by
+`script/DeployWstGBP.s.sol`; the hook helper on 2026-07-03 by `script/DeployHookHelper.s.sol` (plain
+CREATE, Etherscan-verified).
 
 | Contract | Address |
 |---|---|
@@ -50,6 +51,7 @@ CREATE2-mined hook (flags `0x888`); all four ownerless and hold no capital. Depl
 | `WsgemSwapRouter` (v4 settle-first router) | `0x21734507fDca48A3b4e8C496280b63a37D3bD0C8` |
 | `WsgemQuoter` (backstop quoter) | `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee` |
 | `WsgemDirectAdapter` (aggregator / CoW adapter) | `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23` |
+| `WsgemHookHelper` (CoW-hook wrap/unwrap target) | `0x4F93a2E29B0AA75875Ab922d780B6dc59b415B6A` |
 
 The pool is initialized in the PoolManager (v4 singleton — no pool address); `poolId` =
 `0xdb21c31f461611ebeeab8af1280c77a82bb81725e1bf9d6093fbbc207a375ce5` (`keccak256(abi.encode(PoolKey))`
@@ -128,8 +130,9 @@ actions to their orders. Reference docs (verified 2026-07-03):
   calls, supports delegatecall). Evaluated and **not** used — the owner-bound helper is simpler (one
   approval, EOA-friendly, no proxy deploy) with the same bounded-griefing worst case.
 
-Deploy the helper with `make deploy-hook-helper` (dry: `make deploy-hook-helper-dry`); status + open
-items in [`ROADMAP.md`](ROADMAP.md) ("Decision (2026-07-03)").
+The helper is deployed at `0x4F93a2E29B0AA75875Ab922d780B6dc59b415B6A` (2026-07-03, verified;
+redeploy with `make deploy-hook-helper`, dry: `make deploy-hook-helper-dry`); remaining open items
+(dapp repo, E2E, Hook Store listing) in [`ROADMAP.md`](ROADMAP.md) ("Decision (2026-07-03)").
 
 ## The hook design (the important part)
 

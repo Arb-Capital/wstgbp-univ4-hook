@@ -187,6 +187,7 @@ Canonical pool key: `currency0 = tGBP`, `currency1 = wstGBP`, `fee = 0`, `tickSp
 | `WsgemSwapRouter` | `0x21734507fDca48A3b4e8C496280b63a37D3bD0C8` |
 | `WsgemQuoter` | `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee` |
 | `WsgemDirectAdapter` | `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23` |
+| `WsgemHookHelper` (2026-07-03, post-review scope addition) | `0x4F93a2E29B0AA75875Ab922d780B6dc59b415B6A` |
 
 Pool (v4 singleton — no address) `poolId` = `0xdb21c31f461611ebeeab8af1280c77a82bb81725e1bf9d6093fbbc207a375ce5`,
 initialized at `sqrtPriceX96 = 1:1`.

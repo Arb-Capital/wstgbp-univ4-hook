@@ -26,6 +26,14 @@ trust model below applies (it is a pure price-taker — pass real slippage bound
 user pre/post-interactions, *not* a liquidity source; giving CoW solvers a route is
 [route integration](https://docs.cow.fi/cow-protocol/tutorials/solvers/routes_integration) of this adapter.
 
+**CoW-hook target (`src/adapter/WsgemHookHelper.sol`).** The wrap/unwrap target for CoW Swap *user*
+hooks (pre/post-interactions executed by the public, untrusted HooksTrampoline). Owner-bound: anyone
+may call `wrapAll`/`unwrap`/`unwrapAll(owner, ...)`, but funds move only owner→owner at the
+wrapper's oracle prices, capped by the owner's allowance to the helper (`wrapAll` sweeps
+`min(balance, allowance)`, since post-hook proceeds vary with surplus). Worst case for an arbitrary
+caller is a fair-price forced conversion of the approved amount, delivered to the owner — bounded
+griefing, no extraction. Same guards as the adapter via `WsgemWrap`.
+
 Full design lives in [`CLAUDE.md`](CLAUDE.md); the backlog in [`ROADMAP.md`](ROADMAP.md). The audited surface
 and scope are in [`AUDIT_SCOPE.md`](AUDIT_SCOPE.md).
 
@@ -83,8 +91,8 @@ at that block; the hook does not sanity-check it.
 
 ### Deployed contracts (mainnet)
 
-Deployed 2026-06-28. The hook is CREATE2-mined for its permission flags (`0x888`); all four are
-ownerless and hold no capital.
+Deployed 2026-06-28 (the hook helper 2026-07-03). The hook is CREATE2-mined for its permission
+flags (`0x888`); all five are ownerless and hold no capital.
 
 | Contract | Address |
 |---|---|
@@ -92,6 +100,7 @@ ownerless and hold no capital.
 | `WsgemSwapRouter` (v4 settle-first router) | `0x21734507fDca48A3b4e8C496280b63a37D3bD0C8` |
 | `WsgemQuoter` (backstop quoter) | `0x9B409f87aeaADBE912632b1E4de855B6aFCc71Ee` |
 | `WsgemDirectAdapter` (aggregator / CoW adapter) | `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23` |
+| `WsgemHookHelper` (CoW-hook wrap/unwrap target) | `0x4F93a2E29B0AA75875Ab922d780B6dc59b415B6A` |
 
 The pool itself has no address — v4 is a singleton, so it lives inside the PoolManager keyed by
 `poolId = keccak256(abi.encode(PoolKey))`:
@@ -101,8 +110,8 @@ The pool itself has no address — v4 is a singleton, so it lives inside the Poo
 | tGBP/wstGBP (fee 0, tickSpacing 1, hook `0xfE36…4888`) | `0xdb21c31f461611ebeeab8af1280c77a82bb81725e1bf9d6093fbbc207a375ce5` |
 
 Swap on v4 through `WsgemSwapRouter` (settle-first); DEX aggregators / CoW solvers route through
-`WsgemDirectAdapter` (`approve` + swap). Quote off-chain from `wstGBP.mintcost()`/`burncost()` or
-on-chain via `WsgemQuoter`.
+`WsgemDirectAdapter` (`approve` + swap); CoW Swap user hooks target `WsgemHookHelper` (owner-bound
+wrap/unwrap). Quote off-chain from `wstGBP.mintcost()`/`burncost()` or on-chain via `WsgemQuoter`.
 
 ### Key mainnet addresses
 
