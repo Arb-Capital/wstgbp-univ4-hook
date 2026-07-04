@@ -289,6 +289,44 @@ flipped-ordering e2e suite, below):
 - Swaps must be settle-first (input paid before `swap`). Stock swap-first routers revert on `take`;
   route via `WsgemSwapRouter` or a settle-first solver/aggregator integration.
 
+## Second venue: WETH/wstGBP dynamic-fee hook (`src/weth/`, 2026-07-04, pre-deploy)
+
+A separate product sharing the repo: **`WethWstGbpHook`**, a fee-only dynamic-fee hook for a
+WETH/wstGBP pool ("volatility antenna" feeding arb flow into the backstop venue), plus
+**`POLCompounder`** (keeper-compounded POL held directly in the PoolManager as its own locker).
+Spec: `~/Insync/brian@brianmcmichael.com/Dropbox/Work/ARB/weth-wstgbp-v4-hook-plan.md`.
+
+Key facts (full detail: README venue section, `SECURITY_WETH_WSTGBP.md`, `DEPLOY.md`, `sim/`):
+
+- **Real AMM pool** (dynamic-fee flag, LP welcome), unlike the backstop. Hook only overrides the
+  LP fee per swap: directional base (mint side wstGBP-in 30 bps = redeem side WETH-in 5 bps + the
+  wrapper's 25 bps redeem leg) + toxicity surcharge on deviation-closing flow
+  (`min(0.5×(|d|−10bps), 60bps)`), vs fair = `(ETH/USD ÷ GBP/USD) ÷ navprice()`. **All units ppm.**
+- **Never reverts on oracle state** (raw-staticcall reads; `navprice()==0` = pip paused = fallback
+  trigger; per-feed staleness windows 4500s/90000s); fallback = flat 30 bps. Fair price cached in
+  **transient storage per transaction**; deviation recomputed from live slot0 every swap.
+- **Fee-only ⇒ stock v4 Quoter is exact** (parity suite proves to the wei, all regimes). Fee
+  observation in tests: the PM `Swap` event's `fee` field (slot0.lpFee stays 0 — trap).
+- Owner (hook + compounder): Arb Capital multisig `0x846a655a4fA13d86B94966DFDf4D9a070e554f7c`
+  (Ownable2Step; hook owner assigned at construction — no transfer step). Admin = `setFeeParams`
+  (bounds-checked, ≤10% ceiling) + `setPaused` (changes pricing, never blocks swaps).
+- Verified economic finding: **trade splitting is not fee-neutral** — slices converge to the
+  linear schedule's integral (single swap pays the top-of-ramp premium). Documented, accepted for
+  v1, factored into the sim recommendation (slope 0.5× not 1.0×).
+- Gas: warm overhead 9,664 (<10k target met); cold 66,397 (spec's 40k waived — ~35k is
+  irreducible oracle proxy reads; 80k regression ceiling in the gas test).
+- Deploy: `make deploy-weth-hook[-dry]` → verify → `make init-weth-pool[-dry]` (**init-only**: pool
+  created at oracle fair, no funds move) → **POL funded via the Uniswap UI from the Safe**
+  (standard PositionManager NFT; `test/WethWstGbpPositionManager.t.sol` pins the UI call shape).
+  `POLCompounder` is optional automation, NOT in the launch path (migration recipe in `DEPLOY.md`
+  appendix). Range decision (2026-07-04): bounds are GBP-native/permanent; cable-hardened treasury
+  bracket WETH $1,400–$10,000 across cable 1.10–1.45 = ticks −91,140/−68,640 (fair 961–9,048
+  wstGBP/WETH, ~2.6× full-range efficiency). Runbook `DEPLOY.md`; monitoring `monitoring/`.
+- Out of the backstop audit's scope (AUDIT_SCOPE.md notes it); needs its own audit before POL
+  scale-up. Sim harness: `sim/` (stdlib Python; `make sim-test` / `make sim-sweep`;
+  `make sim-data` fetches Binance bars). Coverage note: gas suite excluded from `make coverage`
+  (optimizer-off build breaks gas asserts — `COVERAGE_SKIP` in the Makefile).
+
 ## Roadmap / open work
 
 Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. Done: the backstop hook,

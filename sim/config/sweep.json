@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "Sweep configuration - single source of truth for regimes & environment assumptions.",
+    "CSV paths are relative to the repo root (run via `make sim-sweep`).",
+    "trend-2021: ETH/GBP ~x3, Feb-May 2021, native Binance ETHGBP bars, 80 gwei regime.",
+    "chop-2024: Jul-Oct 2024 (ETH ranged ~$2.3-2.8k). Binance delisted GBP pairs in 2023,",
+    "so this is ETHUSDT divided by constant GBPUSD 1.30 - documented approximation (GBP/USD",
+    "vol is an order of magnitude below ETH's; does not move relative parameter ranking).",
+    "Supply a real composed ETH/GBP csv and drop `gbpusd` to tighten it."
+  ],
+  "nav_apy": 0.04,
+  "regimes": [
+    { "name": "trend-2021", "csv": "sim/data/ethgbp_trend_2021.csv", "gas_gwei": 80.0 },
+    { "name": "chop-2024", "csv": "sim/data/ethusdt_chop_2024.csv", "gbpusd": 1.30, "gas_gwei": 8.0 }
+  ]
+}

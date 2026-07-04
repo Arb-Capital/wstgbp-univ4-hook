@@ -1,0 +1,9 @@
+{
+  "controlSwapPoolCold": "101942",
+  "controlSwapWarm": "65244",
+  "hookColdOverheadGas": "66397",
+  "hookSwapOracleCold": "168339",
+  "hookSwapWarm": "74908",
+  "hookWarmOverheadGas": "9664",
+  "warmupSwapDiscarded": "156551"
+}

@@ -11,7 +11,12 @@ COVERAGE_EXCLUDE := (test/|script/|src/v4/base/)
 # (`WsgemDirectAdapterInvariants`) suites are covered wherever their files live.
 INVARIANT_MATCH := Invariants
 
-.PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry deploy-hook-helper deploy-hook-helper-dry snapshot snapshot-check
+# Excluded from coverage runs (not just from the report): the gas suite asserts optimizer-built
+# gas numbers, which the coverage build (optimizer off) legitimately misses.
+COVERAGE_SKIP := (Invariants|WethWstGbpGasTest)
+
+.PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry deploy-hook-helper deploy-hook-helper-dry snapshot snapshot-check \
+	sim-test sim-sweep sim-data deploy-weth-hook deploy-weth-hook-dry init-weth-pool init-weth-pool-dry
 
 build :; forge build
 
@@ -87,12 +92,61 @@ snapshot-check :; forge snapshot --check --no-match-contract "$(INVARIANT_MATCH)
 
 # Summary coverage to the terminal. Forge disables optimizer/viaIR here for more
 # accurate source maps.
-coverage :; forge coverage --no-match-coverage "$(COVERAGE_EXCLUDE)" --no-match-contract "$(INVARIANT_MATCH)"
+coverage :; forge coverage --no-match-coverage "$(COVERAGE_EXCLUDE)" --no-match-contract "$(COVERAGE_SKIP)"
 
 # Full HTML report into docs/coverage-report/ (gitignored). Regenerates lcov.info.
-gen-report :; forge coverage --no-match-coverage "$(COVERAGE_EXCLUDE)" --no-match-contract "$(INVARIANT_MATCH)" --report lcov && genhtml lcov.info --output-directory docs/coverage-report
+gen-report :; forge coverage --no-match-coverage "$(COVERAGE_EXCLUDE)" --no-match-contract "$(COVERAGE_SKIP)" --report lcov && genhtml lcov.info --output-directory docs/coverage-report
 
 # Serve the HTML report at http://localhost:8000 — opening index.html directly in a
 # Flatpak/Snap browser routes through the document portal, which only shares that one
 # file with the sandbox and so drops the report's CSS/images. HTTP avoids that.
 serve-report :; python3 -m http.server 8000 --directory docs/coverage-report
+
+# --- WETH/wstGBP replay sim (spec Phase 5; see sim/README.md) ---
+
+# Fee-vector cross-pin + exact pool-math unit tests for the Python sim.
+sim-test :; python3 -m pytest sim/tests -q
+
+# Full parameter sweep -> sim/RESULTS.md. Needs the regime CSVs (sim/data/fetch_binance.sh).
+sim-sweep :; python3 sim/run_sweep.py
+
+# Download the regime minute bars from Binance public data (idempotent).
+sim-data :; sim/data/fetch_binance.sh
+
+# --- WETH/wstGBP dynamic-fee venue deploy (Phase 6; see DEPLOY.md for the full runbook) ---
+
+# Simulate the hook deploy on a mainnet fork — no broadcast, no key. Mines the salt, checks the
+# oracle composition corridor, and runs every post-deploy assert.
+deploy-weth-hook-dry :; env -u ETH_FROM -u ETH_KEYSTORE forge script script/DeployWethHook.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+# Broadcast the hook deploy (keystore-signed) + Etherscan verify. Owner is the multisig from
+# construction — nothing to accept, nothing to transfer.
+deploy-weth-hook :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required for --verify"; exit 1; }
+	forge script script/DeployWethHook.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --slow --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
+
+# Simulate the INIT-ONLY pool creation (no funds move — POL is funded later via the Uniswap UI;
+# see DEPLOY.md). Needs only WETH_HOOK.
+init-weth-pool-dry :
+	@test -n "$(WETH_HOOK)" || { echo "WETH_HOOK (deployed hook address) is required"; exit 1; }
+	env -u ETH_FROM -u ETH_KEYSTORE forge script script/InitWethPool.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+# Broadcast the init-only pool creation (keystore-signed). One cheap tx; re-running reverts
+# (pool already initialized). Funding is a Uniswap-UI action afterwards, not a script.
+init-weth-pool :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	@test -n "$(WETH_HOOK)" || { echo "WETH_HOOK (deployed hook address) is required"; exit 1; }
+	forge script script/InitWethPool.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --slow

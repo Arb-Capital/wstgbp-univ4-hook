@@ -128,6 +128,87 @@ wstGBP, `false` is a **SELL**. Both tokens are 18 decimals; all prices are WAD (
 
 ---
 
+## WETH/wstGBP dynamic-fee venue (`src/weth/`) — implemented, pre-deploy
+
+A second, independent v4 hook: **`WethWstGbpHook`**, a **fee-only, oracle-aware dynamic-fee hook**
+for a WETH/wstGBP pool ("volatility antenna" — converts ETH/GBP volatility into arb flow that routes
+through the backstop venue above, while protocol-owned liquidity captures the deviation via fees).
+Unlike the backstop it is a *real AMM pool*: LP is allowed, the hook only overrides the LP fee per
+swap (`beforeSwap` returns `fee | OVERRIDE_FEE_FLAG`; no custom accounting, so the stock V4 Quoter
+quotes it exactly). POL is held by a keeper-compounded `POLCompounder`. Owner (fee params + pause
+only; logic immutable): the Arb Capital multisig `0x846a655a4fA13d86B94966DFDf4D9a070e554f7c`.
+
+**Fee model.** `fee = clamp(directionalBase + toxicitySurcharge, minFee, maxFee)`; mint side
+(wstGBP-in) base 30 bps, redeem side (WETH-in) base 5 bps (band symmetry: the wrapper redeem leg
+carries a structural +25 bps). Surcharge applies only to swaps *closing* a pool-vs-fair deviation
+`|d| >` 10 bps: `min(0.5 × (|d| − threshold), 60 bps)`. Oracle failure of any kind degrades to a
+flat 30 bps fallback fee — `beforeSwap` never reverts on oracle state.
+
+**Unit convention: everything is ppm.** The v4 lpFee unit is parts-per-million
+(`MAX_LP_FEE = 1_000_000`); 1 bp = 100 ppm, so 30 bps = 3000. All fees, deviations, thresholds, and
+the surcharge slope in `src/weth/` are ppm — no bps-denominated variable exists in code.
+
+**Fair value composition** (`OracleLib`): `fair (wstGBP per WETH) = (ETH/USD ÷ GBP/USD) ÷ navprice`,
+where `navprice()` is the wrapper's WAD tGBP-per-wstGBP NAV. `navprice() == 0` (pip paused) is an
+explicit fallback trigger; the wstGBP leg is a manually-poked push oracle with **no on-chain
+staleness signal** (documented limitation). The composed fair price is cached in **transient
+storage per transaction** (EIP-1153) — multi-hop routes and bundles pay the Chainlink reads once;
+deviation is recomputed from live `slot0` on every swap.
+
+### Key mainnet addresses (WETH/wstGBP venue)
+
+Verified on-chain and against the Chainlink reference data directory on 2026-07-04
+(`cast call <feed> "description()(string)" / "decimals()(uint8)" / "latestRoundData()..."`).
+
+| Role | Address | Notes |
+|---|---|---|
+| WETH (currency1) | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` | 18 decimals |
+| wstGBP (currency0, the wrapper) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` | `0x57C3… < 0xC02a…` ⇒ wstGBP = currency0 |
+| Chainlink ETH/USD | `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419` | 8 dec; heartbeat **3600s**, deviation **0.5%** → staleness window 4500s |
+| Chainlink GBP/USD | `0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5` | 8 dec; heartbeat **86400s**, deviation **0.15%** → staleness window 90000s |
+| v4 PoolManager | `0x000000000004444c5dc75cB358380D2e3dE08A90` | singleton |
+| v4 Quoter (stock) | `0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203` | quotes this hook exactly (fee-only) |
+| Owner multisig | `0x846a655a4fA13d86B94966DFDf4D9a070e554f7c` | `setFeeParams` / `setPaused` via Ownable2Step |
+
+Staleness windows are heartbeat + margin — using the bare heartbeat would false-trigger fallback at
+every update boundary. Dependency pins are unchanged from the backstop venue (v4-periphery
+`363226d`, vendored v4-core `v4.0.0`); the Chainlink interface is vendored at
+`src/weth/interfaces/IAggregatorV3.sol`.
+
+**Gas** (vs an identical hookless static-fee pool, measured in `test/WethWstGbpGas.t.sol`,
+2026-07-04): warm swap overhead (fair price cached this tx) **9,664** — meets the <10k target; cold
+swap overhead (first swap of the tx) **66,397** — the spec's <40k target is **consciously waived**:
+~35k of the cold path is irreducible external reads (two real Chainlink proxy→aggregator chains
+≈24k + the wstGBP `navprice()` proxy chain ≈11k) that the target did not budget for. The test
+enforces warm <10k and an 80k cold regression ceiling.
+
+**POL is funded via the Uniswap UI, not scripts.** The hook has no liquidity callbacks, so the
+pool is a standard v4 AMM: the treasury Safe mints/collects/removes positions through the web app /
+canonical PositionManager like any pool (`test/WethWstGbpPositionManager.t.sol` pins the exact UI
+call shape against the real mainnet PosM, including the treasury bracket). Launch flow = two script
+txs (deploy hook, init pool at oracle fair — no funds move) + UI funding; see `DEPLOY.md`.
+Range policy: bounds are **GBP-native and permanent** (the pool's coordinate is wstGBP-per-WETH);
+their USD meaning floats with cable and creeps up ~4%/yr with the NAV ratchet. The cable-hardened
+treasury bracket (WETH $1,400–$10,000 guaranteed across GBP/USD 1.10–1.45) is ticks
+**−91,140 / −68,640** ≈ fair 961–9,048 wstGBP/WETH, ~2.6× full-range capital efficiency.
+
+**`POLCompounder`** (`src/weth/POLCompounder.sol`) is **optional automation, not in the launch
+path**: a PoolManager-direct locker that compounds fees in one keeper call (poke → oracle-bounded
+rebalance vs the same OracleLib fair ± 50 bps, skipped in fallback → add liquidity), principal
+structurally unable to leave the pool during a compound. Fully tested; adopt later via the
+migration path in `DEPLOY.md`'s appendix if fee volume ever justifies keeper infra (never
+compounding at all costs only ~f²/2 ≈ 0.5%/yr at a 10% fee APR).
+
+**Testing & docs**: 102 venue tests across 9 suites (unit ×2, fork, flipped-ordering, quoter
+parity, gas, adversarial, PositionManager/UI-path, compounder) — `make test` / `make coverage`
+(hook + libs 100% all metrics).
+Adversarial/economic notes in [`SECURITY_WETH_WSTGBP.md`](SECURITY_WETH_WSTGBP.md); fee-parameter
+sweep + recommendation in [`sim/RESULTS.md`](sim/RESULTS.md) (`make sim-sweep` regenerates);
+deployment runbook in [`DEPLOY.md`](DEPLOY.md) (`make deploy-weth-hook[-dry]`,
+`make init-weth-pool[-dry]`); Dune monitoring SQL + off-chain feed probe in `monitoring/`.
+
+---
+
 ## Build / test
 
 ```bash

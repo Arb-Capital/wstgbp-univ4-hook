@@ -1,0 +1,25 @@
+{
+  "_comment": "Shared FeeMath vectors pinning sim/wethsim/feemath.py to src/weth/lib/FeeMath.sol. The Solidity side asserts the same table (duplicated as constants in test/WethWstGbpFeeMath.t.sol test_sharedSimVectors — fs_permissions deliberately do not cover this file). params fields override the defaults (3000/500/200/10000/3000/1000/500000/6000).",
+  "vectors": [
+    { "mint": true,  "d": 0,         "params": {}, "fee": 3000 },
+    { "mint": false, "d": 0,         "params": {}, "fee": 500 },
+    { "mint": false, "d": 2000,      "params": {}, "fee": 1000 },
+    { "mint": true,  "d": 2000,      "params": {}, "fee": 3000 },
+    { "mint": true,  "d": -2000,     "params": {}, "fee": 3500 },
+    { "mint": false, "d": -2000,     "params": {}, "fee": 500 },
+    { "mint": false, "d": 1000,      "params": {}, "fee": 500 },
+    { "mint": false, "d": 1001,      "params": {}, "fee": 500 },
+    { "mint": false, "d": 1010,      "params": {}, "fee": 505 },
+    { "mint": true,  "d": -1010,     "params": {}, "fee": 3005 },
+    { "mint": false, "d": 13000,     "params": {}, "fee": 6500 },
+    { "mint": false, "d": 10000000,  "params": {}, "fee": 6500 },
+    { "mint": true,  "d": -10000000, "params": {}, "fee": 9000 },
+    { "mint": true,  "d": -10000000, "params": { "max_fee": 7000 }, "fee": 7000 },
+    { "mint": false, "d": 0,         "params": { "base_fee_redeem_side": 100 }, "fee": 200 },
+    { "mint": false, "d": 5000,      "params": { "toxicity_slope_ppm": 0 }, "fee": 500 },
+    { "mint": false, "d": 3000,      "params": { "toxicity_slope_ppm": 1000000 }, "fee": 2500 },
+    { "mint": true,  "d": 0,         "params": { "base_fee_mint_side": 2500, "base_fee_redeem_side": 1000 }, "fee": 2500 },
+    { "mint": false, "d": 0,         "params": { "base_fee_mint_side": 2500, "base_fee_redeem_side": 1000 }, "fee": 1000 },
+    { "mint": false, "d": 4600,      "params": {}, "fee": 2300 }
+  ]
+}

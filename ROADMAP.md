@@ -11,6 +11,53 @@ adapter `0xBE402d34f31133B1Dc00277f24F8ce2d975CBe23`; hook helper (2026-07-03)
 `0x4F93a2E29B0AA75875Ab922d780B6dc59b415B6A`. Full table in `README.md` / `AUDIT_SCOPE.md` /
 `CLAUDE.md`. Remaining: off-chain aggregator/CoW listing + the CoW hook dapp (below).
 
+## Track (2026-07-04): WETH/wstGBP dynamic-fee venue (`src/weth/`)
+
+Second, independent hook per the plan in
+`~/Insync/brian@brianmcmichael.com/Dropbox/Work/ARB/weth-wstgbp-v4-hook-plan.md`: fee-only
+dynamic-fee `WethWstGbpHook` (directional base 30/5 bps + toxicity surcharge vs Chainlink-composed
+fair value, never-revert fallback, per-tx transient cache) + keeper-compounded `POLCompounder`
+holding the POL position directly in the PoolManager. Owner multisig
+`0x846a655a4fA13d86B94966DFDf4D9a070e554f7c` (Ownable2Step; env-free, baked in deploy script).
+All quantities ppm. See the README section "WETH/wstGBP dynamic-fee venue".
+
+- [x] Phase 0 scaffold: vendored `IAggregatorV3`, feeds verified (ETH/USD 3600s/0.5%,
+  GBP/USD 86400s/0.15%, both 8 dec), README address table + conventions
+- [x] Phase 1 `FeeMath` + `OracleLib` + unit suites — 100% all metrics, fuzz bounds
+- [x] Phase 2 hook + fork suite (31) + flipped-ordering suite (4) — 100% hook coverage,
+  both-oracles-bricked swap completes at fallbackFee
+- [x] Phase 3 stock-Quoter parity (exact to the wei, all regimes incl. fallback/paused) + gas
+  snapshots — warm 9,664 (<10k target MET); cold 66,397 (spec's <40k **consciously waived**:
+  ~35k is irreducible Chainlink+navprice proxy reads; 80k regression ceiling enforced)
+- [x] Phase 4 adversarial suite (5) + `SECURITY_WETH_WSTGBP.md` + AUDIT_SCOPE out-of-scope note.
+  Notable verified finding: trade splitting is NOT fee-neutral — slices converge to the linear
+  schedule's integral (~2x cheaper at the cap); documented as the economic floor, v2 candidate
+- [x] Phase 5 Python replay sim (`sim/`, stdlib-only) + sweep → `sim/RESULTS.md`. Recommendation
+  = (30,5) bases + slope 0.5x (the working defaults); trend-2021 spent 29% of bars out of the
+  ±75% range (POL-width policy note); every slope>0 config beats both baselines in both regimes
+- [x] Phase 6 `DeployWethHook.s.sol` (multisig owner from construction; dry-run validated on fork)
+  + `InitWethPool.s.sol` (compounder-bootstrap POL seed) + Makefile targets + `DEPLOY.md` runbook
+  + `monitoring/dune/*.sql` (real topic0s) + `monitoring/check_feeds.sh` (live-validated)
+- [x] Phase 7 `POLCompounder` (direct PoolManager locker, single-unlock compound, oracle-bounded
+  rebalance) + fork suite (22) + keeper runbook (`DEPLOY.md` §7)
+
+Decision (2026-07-04, funding UX): POL is funded **via the Uniswap UI** from the treasury Safe
+(PositionManager NFT; UI path pinned by `test/WethWstGbpPositionManager.t.sol` against the real
+mainnet PosM incl. the treasury bracket ticks −91,140/−68,640). `InitWethPool.s.sol` is init-only
+(no funds); `POLCompounder` moved out of the launch path to optional automation (DEPLOY.md
+appendix) — the fire-and-forget requirement beat keeper infra; never-compounding drag ≈ 0.5%/yr at
+10% fee APR vs the measured fee-policy alpha. Range bounds are GBP-native (cable drift documented
+in README); cable-hardened $1,400–$10,000 bracket computed for cable 1.10–1.45.
+
+Open (post-implementation):
+- [ ] Mainnet deploy per `DEPLOY.md` (hook → verify → init-only pool → UI funding from the Safe →
+      monitors)
+- [ ] Aggregator/routing submissions (1inch/Odos/0x/CoW) with the quoter-parity results; confirm
+  the Uniswap routing API picks up dynamic-fee hook pools (spec §7)
+- [ ] Announce fee semantics publicly (searchers must be able to model the band)
+- [ ] External audit of `src/weth/` before/alongside mainnet POL scale-up (own scope doc TBD;
+  see AUDIT_SCOPE.md out-of-scope note + SECURITY_WETH_WSTGBP.md)
+
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 
 Only **one** hook goes to external audit / mainnet, and it is **`WsgemBackstopHook`** (pure backstop,

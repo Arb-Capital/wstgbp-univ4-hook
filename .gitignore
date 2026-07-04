@@ -15,3 +15,8 @@ lcov.info
 
 # Dotenv file
 .env
+sim/data/*.csv
+
+# Python (sim harness)
+__pycache__/
+*.py[cod]

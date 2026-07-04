@@ -68,6 +68,10 @@ model (the wstGBP wrapper's governance powers a swapper inherits): [`README.md`]
 
 ## Out of scope
 
+- **The WETH/wstGBP dynamic-fee venue** (`src/weth/` — `WethWstGbpHook`, `FeeMath`, `OracleLib`,
+  `POLCompounder`, and its `test/WethWstGbp*` suites), added 2026-07-04. A separate product with its
+  own trust model (Chainlink-composed fair value, fee-only hook, owner multisig); it will get its own
+  audit scope when it freezes. Its adversarial/economic notes live in `SECURITY_WETH_WSTGBP.md`.
 - **Vendored dependencies** under `lib/` (Uniswap v4 core/periphery, forge-std, Permit2) — treated as
   trusted upstream; the integration boundary with them is in scope.
 - **The wstGBP wrapper system and its governance** (`../maseer-one`, the `act`/`pip`/`cop`
