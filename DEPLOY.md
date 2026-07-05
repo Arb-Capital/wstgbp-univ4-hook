@@ -251,13 +251,22 @@ DECISION is venue-specific and is made at funding time from live fair:
 
 - Coordinate: USDC-per-wstGBP = `GBP/USD × navprice()` (≈ 1.342 at 2026-07-05 values). The NAV
   ratchet drifts it UP ~5%/yr forever; cable moves it both ways.
-- Method: bracket = cable envelope × NAV horizon.
-  Worked example (1-year horizon): cable 1.20–1.45, NAV 1.005–1.055 ⇒ USDC-per-wstGBP
-  **min 1.206 / max 1.530** (as wstGBP-per-USDC: 0.654–0.829) — a ~×1.27 geometric band,
-  ~17× full-range efficiency (geometric-mid formula `1/(1−(Pa/Pb)^(1/4))`, the same convention as
-  the §4 WETH figure); the UI snaps to spacing 1 (ticks ≈ −274.4k…−272.1k region).
+- Method: bracket = cable envelope × NAV horizon; efficiency by the geometric-mid formula
+  `1/(1−(Pa/Pb)^(1/4))` (same convention as the §4 WETH figure).
+- **Chosen bracket (2026-07-05, FINAL): USDC-per-wstGBP min 1.20 / max 1.60** (as
+  wstGBP-per-USDC: 0.625–0.833) — **ticks −274,501 / −271,624** at spacing 1 (the UI snaps),
+  **~14.4× full-range efficiency**, deposit mix ≈ 39% USDC / 61% wstGBP at the 2026-07-05 spot
+  (1.3416). Design: 18-month ceiling (cable to 1.485 at end-NAV — above anything since pre-Brexit
+  2016) with a 1-year review, and a deliberately TIGHT floor per the operator's stated stance
+  (2026-07-05): GBP is judged cheap and a low-side breach — the position parking 100% in wstGBP,
+  the appreciating asset, with fees idle until cable recovers above ~1.20 — is explicitly
+  acceptable. The floor sits just under the 2025 low (1.21) and ~10% under spot; conservative
+  alternatives priced during the decision: 1.15–1.60 ≈ 12.6× (gilt-crash-only floor),
+  1.05–1.60 ≈ 10.0× (all-history-safe floor).
 - Tighter is more capital-efficient but re-ranges sooner: the ratchet alone consumes ~5%/yr of
-  headroom toward the max bound. Yearly review, same trigger logic as §4.
+  headroom toward the max bound. Yearly review, same trigger logic as §4; additional re-range
+  trigger here: a sustained low-side park (cable < 1.20 for months) is a choice point — hold
+  wstGBP or re-range down.
 - **Small test add first**, probe swap, confirm the fee schedule (mint side = wstGBP in), then
   real size. sim/RESULTS_USDC.md's POL assumption is 250k wstGBP — revisit fee conclusions if
   funding materially differs.

@@ -151,7 +151,10 @@ venue): zero edits on this track.
       production-params smoke tests (`test_productionSimParams*` — the shipped slope-1.0x literals
       proven checkParams-valid + correctly priced + quoter-exact on-chain), full static-pool
       poolId reconstructed and recorded (`0xbe0ffd8b…bf3bb10`, fee 500/spacing 10)
-- [ ] User-executed: commit/push (condition 1) → deploy + init + verify + POL funding via UI +
+- [ ] User-executed: ~~commit/push~~ (DONE 2026-07-05, deploy rev `c11ae8e` + the bracket-decision
+      doc commit) → deploy + init + verify + POL funding via UI (bracket FINALIZED 2026-07-05:
+      **1.20–1.60 USDC/wstGBP, ticks −274,501/−271,624, ~14.4×** — tight floor by explicit
+      operator stance: GBP judged cheap, full-wstGBP park acceptable; DEPLOY.md §U4) +
       migrate the static-pool LP (DEPLOY.md §U5) + Dune decode; external audit joins
       `src/weth/`'s future scope
 
