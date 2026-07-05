@@ -159,12 +159,16 @@ venue): zero edits on this track.
       to the wei. Deploy rev `c11ae8e` (+ bracket doc commit); next commit must include the
       `broadcast/DeployUsdcHook.s.sol/1/` + `broadcast/InitUsdcPool.s.sol/1/` records (repo
       convention)
-- [ ] Post-deploy: Etherscan verify (`make verify-usdc-hook`), POL funding via UI (bracket FINAL
-      2026-07-05: **1.20–1.60 USDC/wstGBP, ticks −274,501/−271,624, ~14.4×** — tight floor by
-      explicit operator stance: GBP judged cheap, full-wstGBP park acceptable; DEPLOY.md §U4;
-      small test add + probe swaps first), migrate the static-pool LP out
-      (`0xbe0ffd8b…bf3bb10`, DEPLOY.md §U5), Dune decode submission + query variants; external
-      audit joins `src/weth/`'s future scope
+- [~] Post-deploy status (2026-07-05 EOD): ~~POL funding started~~ (NFT #335400, UI-snapped ticks
+      −274,418/−271,562 ≈ 1.210–1.610 USDC/wstGBP, ~$8.0k in; final ~$2.1k tranche pending a
+      tGBP buy → wrapper mint — mintcost == navprice today, zero premium);
+      ~~static-pool migration~~ DONE (`0xbe0ffd8b…bf3bb10` liquidity = 0);
+      deploy commit `7b36df7` pushed; ~~Etherscan verify~~ DONE; ~~Dune~~ DONE (decode submitted;
+      queries 7893432/7893433/7893434/7893436 — see monitoring/dune/README.md). REMAINING:
+      check_feeds cron activation (the depeg alarm IS the pause runbook trigger), finish the
+      top-up (tGBP buy → mint → increase #335400); external audit joins `src/weth/`'s
+      future scope; first conveyor trade expected only after ~2-3 ratchets (sim ramp-up finding —
+      rest-at-fair needs accumulated deviation > half-band+legs before the arb arms)
 
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 
