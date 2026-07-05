@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "USDC (cable) venue sweep configuration - single source of truth for regimes & environment.",
+    "CSV paths relative to the repo root (run via `make sim-sweep-usdc`); data from",
+    "sim/data/fetch_dukascopy.sh (Dukascopy GBP/USD 1m BID candles - Binance can't supply cable).",
+    "max_gap_min 4320 (72h) forward-fills forex weekends/bank holidays - matching what the frozen",
+    "on-chain Chainlink feed reports over a weekend.",
+    "gilt-2022: mini-budget stress, Sep-26 flash low ~1.035 - surcharge cap + range breach + oracle",
+    "deadband under violence. gas 10 gwei / ETH $1300 (era-consistent risk-off).",
+    "calm-2024: cable pinned ~1.25-1.29 - isolates pure ratchet-conveyor economics; the static-5",
+    "control row in this regime is the acceptance anchor vs the observed live pool.",
+    "trend-2025: sustained GBP uptrend ~1.21->1.34 - fair RISES so the pool goes wstGBP-rich:",
+    "the only regime exercising the mint-side loop; disciplines the mint-side base.",
+    "nav: discrete weekly ratchet (the conveyor driver): 9 bps/week ~ 4.8% APY, phase 3d."
+  ],
+  "nav": { "step_bps": 9.0, "period_days": 7.0, "phase_days": 3.0 },
+  "regimes": [
+    { "name": "gilt-2022", "csv": "sim/data/gbpusd_gilt_2022.csv", "gas_gwei": 10.0, "eth_usd": 1300.0, "max_gap_min": 4320 },
+    { "name": "calm-2024", "csv": "sim/data/gbpusd_calm_2024.csv", "gas_gwei": 1.0, "eth_usd": 3000.0, "max_gap_min": 4320 },
+    { "name": "trend-2025", "csv": "sim/data/gbpusd_trend_2025.csv", "gas_gwei": 1.0, "eth_usd": 2500.0, "max_gap_min": 4320 }
+  ]
+}

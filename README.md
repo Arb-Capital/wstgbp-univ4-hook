@@ -216,6 +216,44 @@ deployment runbook in [`DEPLOY.md`](DEPLOY.md) (`make deploy-weth-hook[-dry]`,
 
 ---
 
+## wstGBP/USDC dynamic-fee venue (`src/usdc/`) — BUILT 2026-07-05 (pre-deploy)
+
+Third venue: **`UsdcWstGbpHook`**, a fee-only, oracle-aware dynamic-fee hook for a wstGBP/USDC
+pool — a close clone of the WETH venue above, re-parameterized for a near-stable cable pair.
+Motivation: the pre-existing STATIC 5bps wstGBP/USDC pool (`0xbe0f…bb10`) runs an unprotected
+**buy-then-redeem conveyor** — each weekly NAV ratchet leaves it below the new burn floor, arbs
+buy the gap and exit via `wstGBP.redeem`, the protocol earns the 25bps wrapper spread per round
+trip and the LP eats the skim. The hook keeps the conveyor running (it IS protocol revenue) while
+the toxicity surcharge recaptures the residual arb skim into POL; the ranking objective in the
+parameter sim is **house take** = LP PnL + protocol band revenue, with an explicit
+conveyor-alive constraint ([`sim/RESULTS_USDC.md`](sim/RESULTS_USDC.md), `make sim-sweep-usdc`).
+
+Deltas vs the WETH venue (everything else — fee-only `OVERRIDE_FEE_FLAG`, never-revert oracle
+reads, per-tx transient fair cache, `Ownable2Step` multisig `0x846a…4f7c`, flags `0x20C0` — is
+identical):
+
+- **Single-feed fair**: `fair (wstGBP per USDC, WAD) = 1e8·WAD² / (GBP/USD_8dec · navprice())` —
+  **USDC is assumed $1.00**; there is deliberately no USDC/USD feed, so a depeg is INVISIBLE to
+  the hook (accepted risk: monitoring probe + owner pause is the entire defense —
+  [`SECURITY_USDC_WSTGBP.md`](SECURITY_USDC_WSTGBP.md) §6). `FallbackReason` is a 5-entry enum —
+  reason codes RENUMBER vs weth (`monitoring/dune/README.md` has the cross-venue table).
+- **6-decimal quote token**: the ENTIRE decimal handling is the `USDC_UNIT = 1e6` numerator in
+  `OracleLib.poolPriceWstGbpPerUsdcWad` (folds the 1e12 raw-units gap; constructor asserts
+  `USDC.decimals() == 6`). Direction semantics are unchanged: d > 0 ⇒ USDC rich ⇒ closing flow =
+  USDC-in (redeem side) — exactly the post-ratchet conveyor geometry.
+- **9-field `FeeParams`** (single `gbpUsdStalenessSec = 90000`; the same shared sim vector table
+  pins both venues' FeeMath), tickSpacing **1**, **no POLCompounder** (POL via the Uniswap UI).
+- Gas vs an identical hookless pool: warm overhead **9,604** (<10k target), cold **46,814**
+  (<70k ceiling; one Chainlink chain instead of the weth venue's two).
+
+Suites mirror the weth venue's (unit FeeMath/OracleLib, 33-test fork suite, flipped-ordering,
+stock-Quoter parity to the wei, gas, adversarial, PositionManager/UI-path, 8-invariant stateful
+handler) — 100% coverage on `src/usdc/` all metrics. Deploy runbook: `DEPLOY.md` USDC section
+(`make deploy-usdc-hook[-dry]`, `make init-usdc-pool[-dry]`), incl. the migration note for the
+static 5bps pool's LP. User guide: [`docs/USER_GUIDE_USDC_WSTGBP.md`](docs/USER_GUIDE_USDC_WSTGBP.md).
+
+---
+
 ## Build / test
 
 ```bash

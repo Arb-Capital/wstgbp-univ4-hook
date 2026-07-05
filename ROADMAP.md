@@ -87,6 +87,59 @@ Open (post-implementation):
 - [ ] External audit of `src/weth/` before/alongside mainnet POL scale-up (own scope doc TBD;
   see AUDIT_SCOPE.md out-of-scope note + SECURITY_WETH_WSTGBP.md)
 
+## Track (2026-07-05): wstGBP/USDC dynamic-fee venue (`src/usdc/`)
+
+Third venue: `UsdcWstGbpHook`, a clone of the WETH venue re-parameterized for the near-stable cable
+pair. Motivation (on-chain readout of the existing static 5bps wstGBP/USDC pool `0xbe0f…bb10`,
+2026-07-01→05): 15/16 swaps were USDC-in buys exiting via `wstGBP.redeem`; the pool rests at the
+burn floor and each weekly NAV ratchet re-arms the conveyor (~11.6bps arb edge vs burn recaptured
+at only 5bps). The conveyor is *protocol revenue* (25bps mint+redeem spread per round trip) — the
+hook's job is to recapture the residual arb skim into POL without killing the flow.
+
+Key deltas vs `src/weth/` (full plan in the session plan file; design decisions final):
+**single-feed fair** `1e8·WAD·WAD/(gbpUsd·navprice)` wstGBP-per-USDC (USDC assumed $1.00 — depeg
+invisible on-chain; accepted, monitored off-chain, owner pause is the mitigation); **USDC_UNIT=1e6**
+pool-price constant (the entire 6-decimal fix); 9-field `FeeParams` (single staleness window);
+5-entry `FallbackReason` (reason codes RENUMBER vs weth — see monitoring/dune/README.md);
+tickSpacing 1; **no POLCompounder**; fee params from a NEW cable-vol sim (`sim/cablesim/`,
+house-take objective = protocol spread × conveyor volume + pool fees − LP LVR, arb participation
+constraint) — the WETH params do NOT transfer. `src/weth/` and `sim/wethsim/` are frozen (deployed
+venue): zero edits on this track.
+
+- [x] Phase A0 scaffold: `src/usdc/` tree, vendored `IAggregatorV3`, ROADMAP/CLAUDE pointers
+- [x] Phase A1 `OracleLib` (single-feed, 1e6) + `FeeMath` (9-field) + unit suites (recomputed
+      oracle vectors; FeeMath pins the SAME `sim/tests/feemath_vectors.json`) — 100% all metrics
+- [x] Phase A2 `UsdcWstGbpHook` + `UsdcWstGbpForkBase` + hook fork suite (33) + flipped-ordering
+      suite (4) — 100% hook coverage; real-USDC `deal` works via stdStorage
+- [x] Phase A3 stock-Quoter parity (8, exact to the wei incl. fallback/paused + cross-regime
+      fuzz) + gas suite — warm 9,604 (<10k MET), cold 46,814 (<70k ceiling; one Chainlink chain
+      vs weth's two) + COVERAGE_SKIP + snapshot
+- [x] Phase A4 adversarial suite (5: splitting integral −45%, push-then-close −15.09 wstGBP, JIT
+      ~8% bounded, no-cliff, fallback-consistency) + PosM UI-shape suite (2, incl. the tight
+      spacing-1 bracket) + `UsdcWstGbpHookInvariants` (8 invariants green) +
+      `SECURITY_USDC_WSTGBP.md` (incl. USDC-depeg accepted-risk §6) + AUDIT_SCOPE note
+- [x] Track B cable sim: Dukascopy fetcher + `.bi5` stdlib decoder (3 regimes fetched &
+      validated: gilt-2022 low 1.036 ✓), `sim/cablesim/` (weekly NAV *steps*, Chainlink
+      0.15%/24h deadband model, house-take objective, conveyor-dead flag, band-edge arb),
+      27 sim tests incl. the acceptance anchor (static-5 reproduces the observed conveyor).
+      Sweep run 2026-07-05 → `sim/RESULTS_USDC.md` → `simParams()` = **(30,5)bps, thr 1000,
+      slope 1.0x, cap 60bps, minFee 50, fallback 3000** (robust worst-case-rank winner, max
+      rank 4/74 across all 6 cells; ZERO conveyor-dead configs; LP PnL flips −119→+539 vs the
+      static-5 control at >2x house take). Findings: (a) the dynamic equilibrium rests ~53bps
+      below fair — beyond every candidate threshold, so the threshold axis is cosmetic here;
+      (b) slope 1.0x kept (unlike weth's 0.5x demotion): splitting is gas-bounded at conveyor
+      notionals and 0.5x ranks 16–23 in trend-2025; (c) ramp-up: from start-at-fair the
+      conveyor arms only once accumulated ratchets exceed ~half-band+stable+fee ≈ 22.5bps;
+      (d) at ≥1 gwei the conveyor is gas-marginal on 250k POL (gas table in RESULTS_USDC.md)
+- [x] Phase A5 `DeployUsdcHook.s.sol` + `InitUsdcPool.s.sol` (spacing 1, corridor 0.4–1.5e18;
+      dry-run green vs live mainnet, fair 0.7454e18; full anvil rehearsal: init deviation
+      0 ppm) + Makefile targets + DEPLOY.md USDC section (incl. static-pool LP migration) +
+      USER_GUIDE + README section + check_feeds USDC/USD depeg probe (live-validated) +
+      `usdc_fallback_minutes.sql` + cross-venue reason-code table. simParams() carries a
+      PLACEHOLDER banner until RESULTS_USDC.md lands
+- [ ] Readiness pass, then user-executed: deploy + init + verify + POL funding via UI + migrate
+      the static-pool LP; external audit joins `src/weth/`'s future scope
+
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 
 Only **one** hook goes to external audit / mainnet, and it is **`WsgemBackstopHook`** (pure backstop,

@@ -201,3 +201,81 @@ Remove liquidity in the UI → transfer the funds from the Safe to the compounde
 gas < ~150 bps of `compoundable()` value and the pool sits near fair (the rebalance execution-price
 bound budgets the hook's own 30 bps mint-side fee inside the 50 bps default tolerance);
 `NothingToCompound` / `PriceOutOfBounds` reverts are normal and lose nothing.
+
+---
+
+# wstGBP/USDC Dynamic-Fee Venue — Deployment Runbook (third venue)
+
+Same skeleton as the WETH runbook above; this section records only the deltas and the
+venue-specific decisions. Scripts: `script/DeployUsdcHook.s.sol` + `script/InitUsdcPool.s.sol`;
+targets: `make deploy-usdc-hook[-dry]`, `make init-usdc-pool[-dry]`, `make verify-usdc-hook`.
+
+## U0. Preconditions (deltas vs §0)
+
+- [ ] `sim/RESULTS_USDC.md` current (`make sim-sweep-usdc`) and its "Recommended starting
+      FeeParams" == `DeployUsdcHook.simParams()` (synced 2026-07-05: (30,5)bps bases, thr 1000,
+      slope 1.0x, cap 60bps, minFee 50, fallback 3000).
+- [ ] GBP/USD feed heartbeat re-verified (86400s / 0.15% ⇒ window 90000s). There is NO second
+      Chainlink feed on this venue; USDC is assumed $1.00 (SECURITY_USDC_WSTGBP.md §6 — read the
+      depeg section before deploying).
+- [ ] `make test` green incl. the `UsdcWstGbp*` suites; `make test-invariant` green.
+
+## U1. Fork rehearsal
+
+```bash
+make deploy-usdc-hook-dry     # keyless; asserts feed decimals, USDC decimals==6, fair corridor
+                              # (0.4e18–1.5e18 wstGBP/USDC), mining, exact flag bits 0x20C0
+# full two-step rehearsal on a persistent anvil fork (validated 2026-07-05: 0 ppm init
+# deviation, pool price 1.3416 USDC/wstGBP vs live burn/mint anchors):
+anvil --fork-url $ETH_RPC_URL --gas-limit 3000000000 &   # match foundry.toml gas_limit
+# deploy + init against 127.0.0.1:8545 with a funded key, then kill anvil and
+# DELETE the rehearsal broadcast/ records (they are not deploy artifacts).
+```
+
+## U2–U3½. Deploy → init → verify
+
+Identical flow and rationale to §2–§3½: deploy does NOT verify inline; `init-usdc-pool` must
+follow IMMEDIATELY (permissionless init, predictable PoolKey — same front-run window and same
+recovery as §3: if front-run at a bad price, DO NOT fund; arb it to fair through the hook's own
+fee schedule or abandon the key); `make verify-usdc-hook` afterwards. Init post-asserts deviation
+< 1000 ppm vs the single-feed fair. tickSpacing is **1** (near-stable pair — 60 would quantize
+range edges to ~60bps steps against a ±12.5bps band).
+
+## U4. Funding via the Uniswap UI (the Safe) — range selection
+
+Mechanics identical to §4 (Permit2 + PositionManager; pinned by
+`test/UsdcWstGbpPositionManager.t.sol`, including the tight spacing-1 bracket shape). The range
+DECISION is venue-specific and is made at funding time from live fair:
+
+- Coordinate: USDC-per-wstGBP = `GBP/USD × navprice()` (≈ 1.342 at 2026-07-05 values). The NAV
+  ratchet drifts it UP ~5%/yr forever; cable moves it both ways.
+- Method: bracket = cable envelope × NAV horizon.
+  Worked example (1-year horizon): cable 1.20–1.45, NAV 1.005–1.055 ⇒ USDC-per-wstGBP
+  **min 1.206 / max 1.530** (as wstGBP-per-USDC: 0.654–0.829) — a ~×1.27 geometric band,
+  ~8× full-range efficiency; the UI snaps to spacing 1 (ticks ≈ −274.4k…−272.1k region).
+- Tighter is more capital-efficient but re-ranges sooner: the ratchet alone consumes ~5%/yr of
+  headroom toward the max bound. Yearly review, same trigger logic as §4.
+- **Small test add first**, probe swap, confirm the fee schedule (mint side = wstGBP in), then
+  real size. sim/RESULTS_USDC.md's POL assumption is 250k wstGBP — revisit fee conclusions if
+  funding materially differs.
+
+## U5. Migrating out of the static 5bps pool (`0xbe0f…bb10`)
+
+The predecessor pool keeps running the unprotected conveyor as long as it holds LP. Once the hook
+pool is funded:
+
+1. UI → Positions → the static 5bps wstGBP/USDC position → **Collect fees**, then **Remove
+   liquidity** (full exit).
+2. Re-mint into the dynamic-fee pool (U4 bracket) with the recovered tokens.
+3. Do NOT leave both funded long-term: routers will fill through whichever quotes better, and
+   during surcharge regimes that is the static pool — it would leak exactly the toxic flow the
+   hook exists to tax (and its LP eats the ratchet unprotected).
+
+## U6. Monitoring + incidents (deltas vs §6–§7)
+
+- `monitoring/check_feeds.sh` now also probes USDC/USD (advisory depeg alarm, >50bps from $1):
+  on alert the runbook is Safe → `setPaused(true)` (flat fallbackFee both directions, swaps never
+  blocked; unpause after re-peg). This is the ONLY defense the depeg has — the hook cannot see it.
+- Dune: reuse the weth queries by `{{hook_address}}` parameter EXCEPT `fallback_minutes` — reason
+  codes renumber (5-entry enum); use `usdc_fallback_minutes.sql`. Submit the hook for decoding.
+- All other incident procedures (§7) apply verbatim with the usdc addresses.

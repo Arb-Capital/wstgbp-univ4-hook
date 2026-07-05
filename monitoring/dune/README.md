@@ -15,6 +15,29 @@ nothing; run on demand. Measured cost: the alert query = **0.072 credits/run** o
 
 `compounder_activity.sql` intentionally not created (POLCompounder not adopted).
 
+## wstGBP/USDC venue (added 2026-07-05; hook address TBD at deploy)
+
+The usdc hook emits the SAME event signatures as the weth hook (`SwapFee`, `OracleFallback` —
+identical topic0s), so `swapfee_by_direction.sql`, `deviation_histogram.sql`, and
+`alert_sustained_fallback.sql` are reused AS-IS by saving a second Dune query with
+`{{hook_address}}` = the usdc hook and the `block_time` floor moved to its deploy date
+("redeem" direction reads "USDC in"). `fallback_minutes.sql` is the exception — it decodes reason
+codes, which RENUMBER between venues; use `usdc_fallback_minutes.sql` instead. Submit the usdc
+hook for contract decoding at dune.com/contracts/new after deploy.
+
+**Cross-venue `OracleFallback` reason codes — do NOT copy-paste decoders across venues:**
+
+| code | weth venue (8-entry enum) | usdc venue (5-entry enum) |
+|---|---|---|
+| 1 | ETH feed call | GBP feed call |
+| 2 | ETH feed answer | GBP feed answer |
+| 3 | ETH feed stale | GBP feed stale |
+| 4 | GBP feed call | NAV bad (pip paused) |
+| 5 | GBP feed answer | — |
+| 6 | GBP feed stale | — |
+| 7 | NAV bad (pip paused) | — |
+| 255 | owner paused | owner paused (also the USDC-depeg runbook) |
+
 ## Backstop venue queries (added 2026-07-05, hook `0xfE36…4888`, poolId `0xdb21…5ce5`)
 
 | Query | Dune ID | Source |

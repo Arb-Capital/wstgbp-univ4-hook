@@ -21,3 +21,20 @@ GBP/USD minute series, or a Kraken ETHGBP OHLCVT export) at the same path and re
 
 CSV files in this directory are gitignored (a few MB each, reproducible via the script);
 `RESULTS.md` records each input's sha256 so runs are attributable.
+
+## Cable (wstGBP/USDC venue) data — Dukascopy
+
+`./fetch_dukascopy.sh` downloads the three cable regime files (GBP/USD 1-minute BID
+candles, decoded from `.bi5` LZMA by the stdlib `dukascopy_bi5.py`; no key needed —
+Binance cannot supply cable, it delisted GBP pairs in 2023):
+
+| file | window | note |
+|---|---|---|
+| `gbpusd_gilt_2022.csv` | 2022-08-01 → 2022-11-30 | mini-budget stress; Sep-26 flash low ~1.035 |
+| `gbpusd_calm_2024.csv` | 2024-03-01 → 2024-06-30 | cable pinned ~1.25–1.29 (pure ratchet conveyor) |
+| `gbpusd_trend_2025.csv` | 2025-01-01 → 2025-05-31 | sustained GBP uptrend ~1.21 → 1.36 (mint side) |
+
+Forex closes Fri ~22:00 → Sun ~22:00 UTC: the regimes pass `max_gap_min: 4320` (72h) so
+the loader forward-fills weekends flat — exactly what the frozen on-chain Chainlink feed
+reports over a weekend. Manual fallback if Dukascopy is unavailable: HistData.com's free
+GBP/USD M1 exports, converted to the same schema at the same paths.

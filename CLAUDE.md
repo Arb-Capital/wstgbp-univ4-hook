@@ -350,6 +350,27 @@ Key facts (full detail: README venue section, `SECURITY_WETH_WSTGBP.md`, `DEPLOY
   `make test`/coverage by the `Invariants` name match. Handlers need a payable `receive()`
   (PoolSwapTest native refund — the documented gotcha).
 
+## Third venue: wstGBP/USDC dynamic-fee hook (`src/usdc/`) — BUILT 2026-07-05 (pre-deploy)
+
+`UsdcWstGbpHook`: clone of the WETH venue for the near-stable cable pair (full track + findings in
+`ROADMAP.md`; conveyor economics: the existing static 5bps pool `0xbe0f…bb10` drains via
+buy-then-redeem arb each NAV ratchet — the hook recaptures the skim while keeping the 25bps/round-trip
+protocol spread flowing; the sim objective is **house take** = LP PnL + protocol band revenue with a
+conveyor-alive constraint). Deltas vs weth: **single-feed** fair `1e8·WAD²/(gbpUsd·nav)` wstGBP-per-USDC
+(USDC assumed $1.00; depeg invisible — `check_feeds.sh` USDC/USD probe + owner pause is the defense,
+`SECURITY_USDC_WSTGBP.md` §6), `USDC_UNIT = 1e6` pool-price constant (the whole 6-dec fix; constructor
+asserts `USDC.decimals()==6`), 9-field `FeeParams`, 5-entry `FallbackReason` (codes RENUMBER vs weth —
+table in `monitoring/dune/README.md`), tickSpacing 1, no POLCompounder. Status: all suites green
+(unit + 33-test fork + flipped + quoter parity + gas warm 9,604/cold 46,814 + adversarial + PosM +
+8 invariants), 100% coverage on `src/usdc/`; deploy/init scripts rehearsed on anvil (0 ppm init);
+`simParams()` = the `sim/RESULTS_USDC.md` winner ((30,5)bps, thr 1000, slope **1.0x**, cap 60bps,
+minFee 50 — slope 1.0 kept, unlike weth's 0.5 demotion: splitting is gas-bounded at conveyor
+notionals). Sim: `sim/cablesim/` over Dukascopy cable bars (`make sim-data-cable`, `make
+sim-sweep-usdc`; weekly NAV *steps*, Chainlink 0.15%/24h deadband model). Remaining: readiness pass →
+user-executed deploy/init/verify/POL-fund → migrate the static pool's LP (DEPLOY.md §U5).
+**`src/weth/` and `sim/wethsim/` are frozen — zero edits on this track.** Sign trap for tests:
+raising GBP/USD *lowers* fair ⇒ d > 0.
+
 ## Roadmap / open work
 
 Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. Done: the backstop hook,

@@ -36,10 +36,12 @@ INVARIANT_MATCH := Invariants
 
 # Excluded from coverage runs (not just from the report): the gas suite asserts optimizer-built
 # gas numbers, which the coverage build (optimizer off) legitimately misses.
-COVERAGE_SKIP := (Invariants|WethWstGbpGasTest)
+COVERAGE_SKIP := (Invariants|WethWstGbpGasTest|UsdcWstGbpGasTest)
 
 .PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry deploy-hook-helper deploy-hook-helper-dry snapshot snapshot-check \
-	sim-test sim-sweep sim-data deploy-weth-hook deploy-weth-hook-dry verify-weth-hook init-weth-pool init-weth-pool-dry
+	sim-test sim-sweep sim-data sim-sweep-usdc sim-data-cable \
+	deploy-weth-hook deploy-weth-hook-dry verify-weth-hook init-weth-pool init-weth-pool-dry \
+	deploy-usdc-hook deploy-usdc-hook-dry verify-usdc-hook init-usdc-pool init-usdc-pool-dry
 
 build :; forge build
 
@@ -104,14 +106,18 @@ deploy-hook-helper :
 
 clean :; forge clean
 
-# Gas baseline over the fast suites (invariants excluded — their gas is run-to-run random). Regenerate
-# after intentional gas changes.
-snapshot :; forge snapshot --no-match-contract "$(INVARIANT_MATCH)"
+# Gas baseline over the fast suites. Excluded: invariants (run-to-run random) and fuzz tests —
+# a fuzz entry's μ-gas is a function of the RANDOM SEED's input mix, not of the code (observed
+# ~6% run-to-run drift on testFuzz_surchargeMonotoneInDeviation, far past any sane tolerance);
+# fuzz tests still run in `make test`, they just carry no gas baseline. Regenerate after
+# intentional gas changes.
+SNAPSHOT_SKIP_TESTS := ^testFuzz
+snapshot :; forge snapshot --no-match-contract "$(INVARIANT_MATCH)" --no-match-test "$(SNAPSHOT_SKIP_TESTS)"
 
-# Check against the baseline. `--tolerance 1` (1%) absorbs the few-gas median drift the fork + fuzz tests
-# show between runs (forked block / fuzz medians move) while still catching real regressions. Plain
-# `forge snapshot --check` will flag that micro-drift and the invariant tests' missing entries — use this.
-snapshot-check :; forge snapshot --check --no-match-contract "$(INVARIANT_MATCH)" --tolerance 1
+# Check against the baseline. `--tolerance 1` (1%) absorbs the few-gas drift the fork tests show
+# between runs while still catching real regressions. Plain `forge snapshot --check` would flag
+# that micro-drift and the excluded tests' missing entries — use this.
+snapshot-check :; forge snapshot --check --no-match-contract "$(INVARIANT_MATCH)" --no-match-test "$(SNAPSHOT_SKIP_TESTS)" --tolerance 1
 
 # Summary coverage to the terminal. Forge disables optimizer/viaIR here for more
 # accurate source maps.
@@ -135,6 +141,16 @@ sim-sweep :; python3 sim/run_sweep.py
 
 # Download the regime minute bars from Binance public data (idempotent).
 sim-data :; sim/data/fetch_binance.sh
+
+# --- wstGBP/USDC (cable) venue sim (sim/cablesim/; shares sim-test above) ---
+
+# Full cable-venue parameter sweep -> sim/RESULTS_USDC.md (house-take objective).
+# Needs the GBP/USD regime CSVs (make sim-data-cable).
+sim-sweep-usdc :; python3 sim/run_sweep_usdc.py
+
+# Download the GBP/USD 1m regime bars from Dukascopy public data (idempotent; forex —
+# Binance can't supply cable, it delisted GBP pairs in 2023).
+sim-data-cable :; sim/data/fetch_dukascopy.sh
 
 # --- WETH/wstGBP dynamic-fee venue deploy (Phase 6; see DEPLOY.md for the full runbook) ---
 
@@ -184,6 +200,46 @@ init-weth-pool :
 	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
 	@test -n "$(WETH_HOOK)" || { echo "WETH_HOOK (deployed hook address) is required"; exit 1; }
 	forge script script/InitWethPool.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --slow
+
+# --- wstGBP/USDC dynamic-fee venue deploy (see DEPLOY.md, USDC venue section) ---
+# Same shape as the weth block: dry-run keyless; deploy does NOT verify inline (init must follow
+# immediately — init front-run window); verify resumes the broadcast afterwards.
+
+deploy-usdc-hook-dry :; @$(KEYLESS) forge script script/DeployUsdcHook.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+deploy-usdc-hook :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	forge script script/DeployUsdcHook.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --slow
+
+verify-usdc-hook :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (the deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required"; exit 1; }
+	@forge script script/DeployUsdcHook.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		--broadcast --resume --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
+
+init-usdc-pool-dry :
+	@test -n "$(USDC_HOOK)" || { echo "USDC_HOOK (deployed hook address) is required"; exit 1; }
+	@$(KEYLESS) forge script script/InitUsdcPool.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+init-usdc-pool :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	@test -n "$(USDC_HOOK)" || { echo "USDC_HOOK (deployed hook address) is required"; exit 1; }
+	forge script script/InitUsdcPool.s.sol --rpc-url $(ETH_RPC_URL) \
 		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
 		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
 		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \

@@ -72,6 +72,12 @@ model (the wstGBP wrapper's governance powers a swapper inherits): [`README.md`]
   `POLCompounder`, and its `test/WethWstGbp*` suites), added 2026-07-04. A separate product with its
   own trust model (Chainlink-composed fair value, fee-only hook, owner multisig); it will get its own
   audit scope when it freezes. Its adversarial/economic notes live in `SECURITY_WETH_WSTGBP.md`.
+- **The wstGBP/USDC dynamic-fee venue** (`src/usdc/` — `UsdcWstGbpHook`, its venue-local `FeeMath`/
+  `OracleLib`, and the `test/UsdcWstGbp*` suites), added 2026-07-05. A close clone of the WETH venue
+  (single GBP/USD feed, USDC assumed $1.00, 6-decimal quote token, no compounder) intended to be
+  audited ALONGSIDE `src/weth/` in that future scope — the shared architecture means one review
+  covers both with a small delta. Notes in `SECURITY_USDC_WSTGBP.md` (incl. the accepted USDC-depeg
+  risk).
 - **Vendored dependencies** under `lib/` (Uniswap v4 core/periphery, forge-std, Permit2) — treated as
   trusted upstream; the integration boundary with them is in scope.
 - **The wstGBP wrapper system and its governance** (`../maseer-one`, the `act`/`pip`/`cop`
