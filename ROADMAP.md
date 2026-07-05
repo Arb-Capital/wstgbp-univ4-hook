@@ -75,9 +75,12 @@ Open (post-implementation):
       NOTE: deployed from an uncommitted tree ahead of the commit gate; the deploy rev must be the
       very next commit (include the new `broadcast/DeployWethHook.s.sol/1/` +
       `broadcast/InitWethPool.s.sol/1/` records, matching repo convention)
-- [ ] Post-deploy: `make verify-weth-hook` (Etherscan), POL funding via the UI (bracket ticks
-      −88,920/−69,360 per DEPLOY.md §4: small test add → probe swap → real size), §5 probes after
-      funding, §6 monitoring activation (Dune decode, hourly fallback alert, check_feeds cron)
+- [ ] Post-deploy: ~~verify~~ (DONE 2026-07-04, Etherscan "Pass - Verified"), ~~first funding~~
+      (DONE 2026-07-04: NFT #334867, ticks −88,920/−69,360, 745.96 wstGBP + 2.82 WETH, tx
+      `0xdb3066…cd704`); remaining: real-size add if the first was a test tranche, custody
+      decision (NFT currently on the deployer EOA — transfer to the Safe if treasury POL),
+      §6 monitoring fire-and-forget tier (Dune decode + hourly sustained-fallback alert ONLY;
+      no cron — the position needs no attention by design), yearly NAV re-range review
 - [ ] Aggregator/routing submissions (1inch/Odos/0x/CoW) with the quoter-parity results; confirm
   the Uniswap routing API picks up dynamic-fee hook pools (spec §7)
 - [ ] Announce fee semantics publicly (searchers must be able to model the band)

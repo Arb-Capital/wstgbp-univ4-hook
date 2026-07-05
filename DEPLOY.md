@@ -157,14 +157,22 @@ monitoring/check_feeds.sh
 Then one small live swap each direction and confirm the `SwapFee` event decodes with the expected
 fee (30 bps mint side / 5 bps redeem side at ~zero deviation).
 
-## 6. Monitoring activation
+## 6. Monitoring activation (tiered — the position itself needs NONE of this)
 
-1. Submit the hook ABI to Dune decoding; the committed queries in `monitoring/dune/*.sql` run in
-   raw-log form immediately (real topic0 hashes baked in).
-2. Create the queries; schedule `alert_sustained_fallback.sql` hourly with alert-on-results.
-3. Cron `monitoring/check_feeds.sh` every 15 min with a mailer — it watches the oracle root cause
-   the on-chain events can't (a quiet pool in fallback emits nothing).
-   (`compounder_activity.sql` only applies if the optional compounder is ever adopted.)
+Nothing here protects funds; the hook fails soft to a flat 30 bps pool and no response is ever
+time-critical. Monitoring exists for the FEE-POLICY OPERATOR hat (revenue quality: is the
+surcharge actually pricing, or has the pool quietly degraded to fallback?). Pick a tier:
+
+- **Fire-and-forget (recommended baseline):** submit the (verified) hook ABI to Dune decoding,
+  create the committed queries (`monitoring/dune/*.sql`, raw-log-ready), and schedule ONLY
+  `alert_sustained_fallback.sql` hourly with alert-on-results — zero-touch; it emails only when
+  >50% of a trailing hour's swaps priced in fallback. Plus the yearly NAV-drift range review
+  from §4. That's the whole obligation.
+- **Ops-manual (optional, for active fee-policy management):** additionally cron
+  `monitoring/check_feeds.sh` (e.g. daily; 15-min only if you're actively tuning) — it watches
+  the oracle root cause the on-chain events can't show (a QUIET pool in fallback emits nothing,
+  so the Dune alert needs swaps to fire).
+  (`compounder_activity.sql` only applies if the optional compounder is ever adopted.)
 
 ## 7. Incident procedures (all Safe transactions)
 

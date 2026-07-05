@@ -42,7 +42,7 @@ An independent review of this tree returned four findings; dispositions:
 | Sev | Finding | Disposition |
 |---|---|---|
 | Medium | Pool init raceable after hook deploy; runbook only covered the zero-liquidity front-run — nontrivial hostile liquidity at a bad price defeats the dust-swap recovery | **Fixed (runbook)** — DEPLOY.md §3 now: (a) init runs immediately after deploy confirms (Etherscan verify moved after; private-bundle option for a zero-width window); (b) explicit recovery per case: zero-liquidity → dust-swap reprice; nontrivial liquidity off-fair → simulate the exact closing swap and execute profit-bounded (or wait for searchers), fund only under 10 bps; un-normalizable → do NOT fund, use a governance-approved alternate tickSpacing key (the hook accepts any spacing) |
-| Medium | Deploy gate not proven on this tree: `WethWstGbpHookInvariants` aborted 7/8 on publicnode HTTP 403 (archive-request limit) in the reviewer's run | **Acknowledged — open, operator action.** An earlier full run on this machine passed 8/8 (with one campaign re-run after the same 403 class). The gate now explicitly requires an authenticated archive RPC (DEPLOY.md §0; `.env` plumbing exists) and must be re-run at the final commit — verdict condition 3 |
+| Medium | Deploy gate not proven on this tree: `WethWstGbpHookInvariants` aborted 7/8 on publicnode HTTP 403 (archive-request limit) in the reviewer's run | **CLOSED (2026-07-04)** — full `make test-invariant` re-run on an authenticated Alchemy RPC against the exact deployed tree: **21/21 invariants passed across all 4 suites** (backstop 4, adapter 3, weth hook 8, compounder 6) in 1117s, zero failures, zero RPC aborts. Gate requirement retained in DEPLOY.md §0 |
 | Medium/ops | `src/weth/` remains outside the prior audit scope | **Acknowledged — as designed**, now stated as a conscious checklist item: DEPLOY.md §0 records the risk acceptance (first-party review only ⇒ small capped launch POL; scale-up gated on the venue's own external audit) |
 | Low | Deploy rev not commit-clean (many modified/untracked files) | **Acknowledged — operator action** (this repo's assistant is barred from committing). DEPLOY.md §0 now requires a clean `git status` at the recorded rev. Verdict condition 2 |
 
@@ -186,8 +186,8 @@ benchmark by **~834 bps in trend** (+572.4 vs −261.3) and **~918 bps in chop**
       regenerated; OracleLib coverage still 100% all metrics; invariant suite re-smoked green)
 - [ ] Commit + push `1b03a01` and this pass's work (incl. the F-1 fix); record
       `git rev-parse HEAD` as the deploy rev; tree clean at that rev
-- [ ] `make test-invariant` green at the final commit **on an authenticated archive RPC**
-      (`.env` credentials — the public fallback 403s mid-campaign)
+- [x] `make test-invariant` green **on an authenticated archive RPC**: 21/21 across all 4 suites,
+      run against the exact tree state that deployed (2026-07-04)
 - [ ] Risk acceptance recorded: first-party review only until the venue's own audit; launch POL
       small/capped (DEPLOY.md §0)
 - [ ] Deployer funded (gas only), keystore + Etherscan key ready; init follows deploy
