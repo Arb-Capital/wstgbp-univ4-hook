@@ -350,7 +350,7 @@ Key facts (full detail: README venue section, `SECURITY_WETH_WSTGBP.md`, `DEPLOY
   `make test`/coverage by the `Invariants` name match. Handlers need a payable `receive()`
   (PoolSwapTest native refund — the documented gotcha).
 
-## Third venue: wstGBP/USDC dynamic-fee hook (`src/usdc/`) — READINESS: GO 2026-07-05 (pre-deploy)
+## Third venue: wstGBP/USDC dynamic-fee hook (`src/usdc/`) — DEPLOYED 2026-07-05
 
 `UsdcWstGbpHook`: clone of the WETH venue for the near-stable cable pair (full track + findings in
 `ROADMAP.md`; conveyor economics: the existing static 5bps pool `0xbe0f…bb10` drains via
@@ -368,9 +368,13 @@ minFee 50 — slope 1.0 kept, unlike weth's 0.5 demotion: splitting is gas-bound
 notionals). Sim: `sim/cablesim/` over Dukascopy cable bars (`make sim-data-cable`, `make
 sim-sweep-usdc`; weekly NAV *steps*, Chainlink 0.15%/24h deadband model). Readiness pass DONE 2026-07-05 (`docs/READINESS_USDC_WSTGBP_2026-07-05.md`): **GO** — 29/29
 invariants on the authenticated RPC, two-reviewer security pass zero must-fix (3 should-fix
-applied same-day, notably the FAIR_MAX 1.0e18 orientation-catching corridor). Remaining
-(user-executed): commit/push FIRST (verdict condition), deploy/init/verify/POL-fund, migrate the
-static pool's LP (full poolId `0xbe0ffd8b…bf3bb10` in DEPLOY.md §U5).
+applied same-day, notably the FAIR_MAX 1.0e18 orientation-catching corridor).
+**Mainnet (2026-07-05): hook `0x09ff2EB94D873C6B4beFdE087362044a2B02e0c0` (flags 0x20C0), poolId
+`0x3413fca9ffa9fa33b15562b6a81e74368f9ec59fb80ea920fe6c6e9651685a5c` (init tick −273,385, 0 ppm);
+post-deploy verification passed (params 9/9 == simParams, live deviation 0 ppm).** Remaining
+(user-executed): Etherscan verify, POL funding (FINAL bracket 1.20–1.60 USDC/wstGBP, ticks
+−274,501/−271,624), migrate the static pool's LP (`0xbe0ffd8b…bf3bb10`, DEPLOY.md §U5), Dune
+decode, commit incl. broadcast/ records (repo convention).
 **`src/weth/` and `sim/wethsim/` are frozen — zero edits on this track.** Sign trap for tests:
 raising GBP/USD *lowers* fair ⇒ d > 0.
 

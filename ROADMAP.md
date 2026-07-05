@@ -151,12 +151,20 @@ venue): zero edits on this track.
       production-params smoke tests (`test_productionSimParams*` — the shipped slope-1.0x literals
       proven checkParams-valid + correctly priced + quoter-exact on-chain), full static-pool
       poolId reconstructed and recorded (`0xbe0ffd8b…bf3bb10`, fee 500/spacing 10)
-- [ ] User-executed: ~~commit/push~~ (DONE 2026-07-05, deploy rev `c11ae8e` + the bracket-decision
-      doc commit) → deploy + init + verify + POL funding via UI (bracket FINALIZED 2026-07-05:
-      **1.20–1.60 USDC/wstGBP, ticks −274,501/−271,624, ~14.4×** — tight floor by explicit
-      operator stance: GBP judged cheap, full-wstGBP park acceptable; DEPLOY.md §U4) +
-      migrate the static-pool LP (DEPLOY.md §U5) + Dune decode; external audit joins
-      `src/weth/`'s future scope
+- [x] **Mainnet deploy + init 2026-07-05**: hook `0x09ff2EB94D873C6B4beFdE087362044a2B02e0c0`
+      (flags 0x20C0, owner = multisig from construction), poolId
+      `0x3413fca9ffa9fa33b15562b6a81e74368f9ec59fb80ea920fe6c6e9651685a5c` (init tick −273,385,
+      sqrtPriceX96 91769425572216842075680, **0 ppm** deviation). Post-deploy verification passed
+      same day: exact flag bits, all immutables, feeParams 9/9 == simParams, live deviation 0 ppm
+      to the wei. Deploy rev `c11ae8e` (+ bracket doc commit); next commit must include the
+      `broadcast/DeployUsdcHook.s.sol/1/` + `broadcast/InitUsdcPool.s.sol/1/` records (repo
+      convention)
+- [ ] Post-deploy: Etherscan verify (`make verify-usdc-hook`), POL funding via UI (bracket FINAL
+      2026-07-05: **1.20–1.60 USDC/wstGBP, ticks −274,501/−271,624, ~14.4×** — tight floor by
+      explicit operator stance: GBP judged cheap, full-wstGBP park acceptable; DEPLOY.md §U4;
+      small test add + probe swaps first), migrate the static-pool LP out
+      (`0xbe0ffd8b…bf3bb10`, DEPLOY.md §U5), Dune decode submission + query variants; external
+      audit joins `src/weth/`'s future scope
 
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 

@@ -216,7 +216,7 @@ deployment runbook in [`DEPLOY.md`](DEPLOY.md) (`make deploy-weth-hook[-dry]`,
 
 ---
 
-## wstGBP/USDC dynamic-fee venue (`src/usdc/`) — BUILT 2026-07-05 (pre-deploy)
+## wstGBP/USDC dynamic-fee venue (`src/usdc/`) — DEPLOYED 2026-07-05
 
 Third venue: **`UsdcWstGbpHook`**, a fee-only, oracle-aware dynamic-fee hook for a wstGBP/USDC
 pool — a close clone of the WETH venue above, re-parameterized for a near-stable cable pair.
@@ -248,9 +248,27 @@ identical):
 
 Suites mirror the weth venue's (unit FeeMath/OracleLib, 35-test fork suite, flipped-ordering,
 stock-Quoter parity to the wei, gas, adversarial, PositionManager/UI-path, 8-invariant stateful
-handler) — 100% coverage on `src/usdc/` all metrics. Deploy runbook: `DEPLOY.md` USDC section
-(`make deploy-usdc-hook[-dry]`, `make init-usdc-pool[-dry]`), incl. the migration note for the
-static 5bps pool's LP. User guide: [`docs/USER_GUIDE_USDC_WSTGBP.md`](docs/USER_GUIDE_USDC_WSTGBP.md).
+handler) — 100% coverage on `src/usdc/` all metrics. Readiness: **GO** 2026-07-05
+([`docs/READINESS_USDC_WSTGBP_2026-07-05.md`](docs/READINESS_USDC_WSTGBP_2026-07-05.md)). Deploy
+runbook: `DEPLOY.md` USDC section, incl. the migration note for the static 5bps pool's LP. User
+guide: [`docs/USER_GUIDE_USDC_WSTGBP.md`](docs/USER_GUIDE_USDC_WSTGBP.md).
+
+### Key mainnet addresses (wstGBP/USDC venue) — deployed 2026-07-05
+
+| Role | Address |
+|---|---|
+| **`UsdcWstGbpHook`** | `0x09ff2EB94D873C6B4beFdE087362044a2B02e0c0` (flags `0x20C0`; owner = multisig from construction; deployed at rev incl. readiness pass) |
+| **Pool** (v4 singleton — id, not address) | `0x3413fca9ffa9fa33b15562b6a81e74368f9ec59fb80ea920fe6c6e9651685a5c` (init 2026-07-05, tick −273,385, **0 ppm** deviation, sqrtPriceX96 91769425572216842075680) |
+| wstGBP (currency0, the wrapper) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` |
+| USDC (currency1, 6 decimals) | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` |
+| Chainlink GBP/USD (the single feed) | `0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5` (8 dec; heartbeat 86400s / 0.15% → window 90000s) |
+| Chainlink USDC/USD (OFF-CHAIN depeg probe only) | `0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6` |
+| v4 PoolManager / stock Quoter | `0x000000000004444c5dc75cB358380D2e3dE08A90` / `0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203` |
+| Owner multisig | `0x846a655a4fA13d86B94966DFDf4D9a070e554f7c` |
+| Predecessor static 5bps pool (migrate out — DEPLOY.md §U5) | poolId `0xbe0ffd8b92d2610cc4491e5bfcd7f51312c0868183c9b0da577a6f131bf3bb10` |
+
+Canonical PoolKey: (wstGBP, USDC, fee `0x800000` DYNAMIC_FEE_FLAG, tickSpacing 1, hooks = the hook).
+POL bracket (FINAL 2026-07-05): 1.20–1.60 USDC/wstGBP, ticks −274,501/−271,624 (DEPLOY.md §U4).
 
 ---
 
