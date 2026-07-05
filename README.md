@@ -220,7 +220,7 @@ deployment runbook in [`DEPLOY.md`](DEPLOY.md) (`make deploy-weth-hook[-dry]`,
 
 Third venue: **`UsdcWstGbpHook`**, a fee-only, oracle-aware dynamic-fee hook for a wstGBP/USDC
 pool — a close clone of the WETH venue above, re-parameterized for a near-stable cable pair.
-Motivation: the pre-existing STATIC 5bps wstGBP/USDC pool (`0xbe0f…bb10`) runs an unprotected
+Motivation: the pre-existing STATIC 5bps wstGBP/USDC pool (poolId `0xbe0ffd8b…bf3bb10`, fee 500/spacing 10, hookless) runs an unprotected
 **buy-then-redeem conveyor** — each weekly NAV ratchet leaves it below the new burn floor, arbs
 buy the gap and exit via `wstGBP.redeem`, the protocol earns the 25bps wrapper spread per round
 trip and the LP eats the skim. The hook keeps the conveyor running (it IS protocol revenue) while
@@ -246,7 +246,7 @@ identical):
 - Gas vs an identical hookless pool: warm overhead **9,604** (<10k target), cold **46,814**
   (<70k ceiling; one Chainlink chain instead of the weth venue's two).
 
-Suites mirror the weth venue's (unit FeeMath/OracleLib, 33-test fork suite, flipped-ordering,
+Suites mirror the weth venue's (unit FeeMath/OracleLib, 35-test fork suite, flipped-ordering,
 stock-Quoter parity to the wei, gas, adversarial, PositionManager/UI-path, 8-invariant stateful
 handler) — 100% coverage on `src/usdc/` all metrics. Deploy runbook: `DEPLOY.md` USDC section
 (`make deploy-usdc-hook[-dry]`, `make init-usdc-pool[-dry]`), incl. the migration note for the

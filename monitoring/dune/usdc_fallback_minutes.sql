@@ -7,6 +7,9 @@
 --   reasons: 1 GBP feed call, 2 GBP feed answer, 3 GBP feed stale, 4 NAV bad, 255 owner-paused
 --   (An owner pause is ALSO the depeg runbook — a burst of 255s may mean USDC depeg response,
 --   not oracle failure; cross-check monitoring/check_feeds.sh alerts.)
+--   COUNTING SEMANTICS MIX: codes 1-4 emit once per TRANSACTION (write-once verdict cache);
+--   0xFF emits once per SWAP (the pause path skips the cache) - occurrences are not comparable
+--   across that boundary.
 -- SwapFee fallbackMode = data word [2] of
 --   0x501d5d86a8d484bc563346b877c9f64e27cc283c053aed3dc499e4de6ab3173a
 --

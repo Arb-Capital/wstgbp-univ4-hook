@@ -577,8 +577,9 @@ The arb-participation constraint is gas-dominated at this venue's small conveyor
 ## Recommended starting FeeParams (9-field USDC-venue shape)
 
 Winner by worst-case cross-cell rank: **bases=(30,5)bps thr=1000 slope=1x cap=60bps**. Review the tables before
-adopting — the block below feeds `script/DeployUsdcHook.s.sol::simParams()` and is
-duplicated in that venue's test constants.
+adopting — the block below feeds `script/DeployUsdcHook.s.sol::simParams()`, which the
+production-params smoke tests import directly (no duplicated constants; the fork fixture
+deliberately keeps separate working defaults).
 
 ```
 baseFeeMintSide       = 3000

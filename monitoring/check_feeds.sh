@@ -58,8 +58,15 @@ check_feed "USDC/USD" "$USDC_USD" "$USDC_WINDOW"
 
 # USDC depeg (usdc venue): the hook assumes USDC = $1.00 and cannot see a depeg on-chain.
 # On alert: owner pause runbook (SECURITY_USDC_WSTGBP.md §6) — flat fallbackFee, swaps never blocked.
-usdc_answer=$(cast call "$USDC_USD" "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url "$RPC" | sed -n 2p | awk '{print $1}')
-if [ "${usdc_answer:-0}" -lt "$USDC_DEPEG_LO" ] 2>/dev/null || [ "${usdc_answer:-0}" -gt "$USDC_DEPEG_HI" ] 2>/dev/null; then
+# Guarded like check_feed (set -e must not silently abort the alert contract on an RPC hiccup),
+# and non-integer/garbage answers ALERT rather than being swallowed.
+if ! usdc_answer=$(cast call "$USDC_USD" "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url "$RPC" 2>&1 | sed -n 2p | awk '{print $1}'); then
+  echo "ALERT: USDC/USD depeg probe call failed — peg state UNKNOWN; check manually"
+  fail=1
+elif ! [[ "${usdc_answer:-}" =~ ^[0-9]+$ ]]; then
+  echo "ALERT: USDC/USD depeg probe returned garbage ('$usdc_answer') — peg state UNKNOWN; check manually"
+  fail=1
+elif [ "$usdc_answer" -lt "$USDC_DEPEG_LO" ] || [ "$usdc_answer" -gt "$USDC_DEPEG_HI" ]; then
   echo "ALERT: USDC/USD depeg: answer=$usdc_answer (>50bps from \$1) — usdc-venue hook cannot see this; consider setPaused(true)"
   fail=1
 else

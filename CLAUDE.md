@@ -350,7 +350,7 @@ Key facts (full detail: README venue section, `SECURITY_WETH_WSTGBP.md`, `DEPLOY
   `make test`/coverage by the `Invariants` name match. Handlers need a payable `receive()`
   (PoolSwapTest native refund — the documented gotcha).
 
-## Third venue: wstGBP/USDC dynamic-fee hook (`src/usdc/`) — BUILT 2026-07-05 (pre-deploy)
+## Third venue: wstGBP/USDC dynamic-fee hook (`src/usdc/`) — READINESS: GO 2026-07-05 (pre-deploy)
 
 `UsdcWstGbpHook`: clone of the WETH venue for the near-stable cable pair (full track + findings in
 `ROADMAP.md`; conveyor economics: the existing static 5bps pool `0xbe0f…bb10` drains via
@@ -361,13 +361,16 @@ conveyor-alive constraint). Deltas vs weth: **single-feed** fair `1e8·WAD²/(gb
 `SECURITY_USDC_WSTGBP.md` §6), `USDC_UNIT = 1e6` pool-price constant (the whole 6-dec fix; constructor
 asserts `USDC.decimals()==6`), 9-field `FeeParams`, 5-entry `FallbackReason` (codes RENUMBER vs weth —
 table in `monitoring/dune/README.md`), tickSpacing 1, no POLCompounder. Status: all suites green
-(unit + 33-test fork + flipped + quoter parity + gas warm 9,604/cold 46,814 + adversarial + PosM +
+(unit + 35-test fork (incl. production-params smoke) + flipped + quoter parity + gas warm 9,604/cold 46,814 + adversarial + PosM +
 8 invariants), 100% coverage on `src/usdc/`; deploy/init scripts rehearsed on anvil (0 ppm init);
 `simParams()` = the `sim/RESULTS_USDC.md` winner ((30,5)bps, thr 1000, slope **1.0x**, cap 60bps,
 minFee 50 — slope 1.0 kept, unlike weth's 0.5 demotion: splitting is gas-bounded at conveyor
 notionals). Sim: `sim/cablesim/` over Dukascopy cable bars (`make sim-data-cable`, `make
-sim-sweep-usdc`; weekly NAV *steps*, Chainlink 0.15%/24h deadband model). Remaining: readiness pass →
-user-executed deploy/init/verify/POL-fund → migrate the static pool's LP (DEPLOY.md §U5).
+sim-sweep-usdc`; weekly NAV *steps*, Chainlink 0.15%/24h deadband model). Readiness pass DONE 2026-07-05 (`docs/READINESS_USDC_WSTGBP_2026-07-05.md`): **GO** — 29/29
+invariants on the authenticated RPC, two-reviewer security pass zero must-fix (3 should-fix
+applied same-day, notably the FAIR_MAX 1.0e18 orientation-catching corridor). Remaining
+(user-executed): commit/push FIRST (verdict condition), deploy/init/verify/POL-fund, migrate the
+static pool's LP (full poolId `0xbe0ffd8b…bf3bb10` in DEPLOY.md §U5).
 **`src/weth/` and `sim/wethsim/` are frozen — zero edits on this track.** Sign trap for tests:
 raising GBP/USD *lowers* fair ⇒ d > 0.
 

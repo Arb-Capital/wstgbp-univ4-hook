@@ -13,11 +13,14 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
+import {IV4Quoter} from "v4-periphery/src/interfaces/IV4Quoter.sol";
+
 import {UsdcWstGbpForkBase} from "./base/UsdcWstGbpForkBase.sol";
 import {UsdcWstGbpHook} from "../src/usdc/UsdcWstGbpHook.sol";
 import {FeeMath} from "../src/usdc/lib/FeeMath.sol";
 import {OracleLib} from "../src/usdc/lib/OracleLib.sol";
 import {IAggregatorV3} from "../src/usdc/interfaces/IAggregatorV3.sol";
+import {DeployUsdcHook} from "../script/DeployUsdcHook.s.sol";
 
 /// @notice Fork suite for the USDC venue: the hook against the real PoolManager, real wstGBP wrapper
 ///         (NAV driven via vm.store), real USDC (dealt), and a mocked-deterministic GBP/USD feed.
@@ -349,6 +352,60 @@ contract UsdcWstGbpHookTest is UsdcWstGbpForkBase {
         _brickFeed(GBP_USD_FEED);
         _setNav(0);
         _assertFallbackSwap(uint8(OracleLib.FallbackReason.GBP_FEED_CALL)); // first failure wins
+    }
+
+    // ---------------------------------------------------------------- production params smoke
+
+    /// @dev The suites run at the fixture's WORKING defaults (slope 0.5x, minFee 200), not the
+    ///      shipped `DeployUsdcHook.simParams()` (sim/RESULTS_USDC.md winner: slope 1.0x, minFee
+    ///      50). These two tests retune the LIVE hook to the exact shipped literals (imported from
+    ///      the deploy script — no duplicated constants) and pin that they are accepted by
+    ///      checkParams on-chain and price correctly end-to-end. Split across two tests because
+    ///      the per-transaction fair cache makes mid-test feed changes invisible (fixture NatSpec).
+    function test_productionSimParamsBaseFees() public {
+        FeeMath.FeeParams memory p = new DeployUsdcHook().simParams();
+        vm.prank(owner);
+        hook.setFeeParams(p); // reverts if the shipped literals ever fail checkParams
+
+        // Zero deviation: both production bases charge, band symmetry intact.
+        SwapObservation memory mint = _swapAndObserve(MINT_ZF1, -int256(100 * WAD));
+        assertEq(mint.pmFee, p.baseFeeMintSide, "production mint base");
+        assertFalse(mint.fallbackMode, "production staleness window accepts the fixture feed");
+        SwapObservation memory redeem = _swapAndObserve(REDEEM_ZF1, -int256(100 * USDC_UNIT));
+        assertEq(redeem.pmFee, p.baseFeeRedeemSide, "production redeem base");
+        assertEq(mint.pmFee - redeem.pmFee, 2500, "band symmetry at production params");
+    }
+
+    function test_productionSimParamsSurchargeAndQuoterParity() public {
+        FeeMath.FeeParams memory p = new DeployUsdcHook().simParams();
+        vm.prank(owner);
+        hook.setFeeParams(p);
+
+        // Drive the post-ratchet geometry BEFORE any swap (fair caches on first read):
+        // GBP +1% => fair -~1% => d ~ +10000 ppm — past threshold+cap at slope 1.0x.
+        _mockFeed(GBP_USD_FEED, (GBP_USD_ANSWER * 101) / 100, block.timestamp);
+
+        // Independent mirror at PRODUCTION params (the fixture's _expectedFee uses the working
+        // defaults, so recompute here).
+        (uint160 sqrtP,,,) = _slot0();
+        uint256 poolWad = OracleLib.poolPriceWstGbpPerUsdcWad(sqrtP, WSGEM < USDC);
+        int256 d = OracleLib.deviationPpm(poolWad, _fairWad());
+        assertGt(d, int256(uint256(p.deviationThresholdPpm)), "closing regime armed");
+        uint24 expected = FeeMath.swapFee(false, d, p);
+        uint256 ramp = uint256(d) - p.deviationThresholdPpm; // slope 1.0x: surcharge = min(ramp, cap)
+        uint256 surcharge = ramp > p.surchargeCapPpm ? p.surchargeCapPpm : ramp;
+        assertEq(expected, uint24(p.baseFeeRedeemSide + surcharge), "slope-1.0x schedule shape");
+
+        // Stock-quoter parity holds at production params, exact to the wei.
+        (uint256 quotedOut,) = IV4Quoter(0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203)
+            .quoteExactInputSingle(
+                IV4Quoter.QuoteExactSingleParams({
+                    poolKey: key, zeroForOne: REDEEM_ZF1, exactAmount: uint128(100 * USDC_UNIT), hookData: ""
+                })
+            );
+        SwapObservation memory close = _swapAndObserve(REDEEM_ZF1, -int256(100 * USDC_UNIT));
+        assertEq(close.pmFee, expected, "production fee == independent FeeMath mirror");
+        assertEq(uint256(uint128(close.amount0)), quotedOut, "quoted == executed at production params");
     }
 
     // ---------------------------------------------------------------- transient cache

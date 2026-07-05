@@ -36,10 +36,15 @@ contract DeployUsdcHook is Script {
     address internal constant MULTISIG = 0x846a655a4fA13d86B94966DFDf4D9a070e554f7c;
 
     /// @dev Composed-fair-price plausibility corridor (wstGBP per USDC, WAD): today's fair sits at
-    ///      ~0.75e18; the corridor covers GBP/USD in [$0.67, $2.50] at NAV in [1.0, 1.1], while a
-    ///      missed 1e6/1e8/1e12 decimal or orientation bug lands 6+ orders of magnitude outside.
+    ///      ~0.75e18. A missed 1e6/1e8/1e12 decimal bug lands 6+ orders of magnitude outside;
+    ///      FAIR_MAX = 1.0e18 additionally catches an ORIENTATION flip (the inverse, USDC-per-wstGBP
+    ///      ≈ 1.34e18, must be rejected — this pair trades near 1:1, so a wider ceiling would let an
+    ///      inverted composition through, unlike the WETH venue's ~1900:1 pair). fair < 1e18 holds
+    ///      whenever cable·NAV > 1: cable's all-time low is ~1.03 and NAV only ratchets up, so a
+    ///      rejection at this bound means a broken composition, not a market state. FAIR_MIN covers
+    ///      cable·NAV up to 2.5 (beyond 1980s cable extremes).
     uint256 internal constant FAIR_MIN = 0.4e18;
-    uint256 internal constant FAIR_MAX = 1.5e18;
+    uint256 internal constant FAIR_MAX = 1.0e18;
 
     /// @dev sim/RESULTS_USDC.md "Recommended starting FeeParams" (2026-07-05 cable sweep, robust
     ///      worst-case-rank winner across 6 regime×organic cells; conveyor stays alive — ~40% of

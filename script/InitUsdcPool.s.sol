@@ -6,7 +6,6 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
-import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
@@ -43,9 +42,10 @@ contract InitUsdcPool is Script {
     uint256 internal constant WAD = 1e18;
     /// @dev One whole USDC (6 decimals) — the pool-side decimal fold, matching OracleLib.
     uint256 internal constant USDC_UNIT = 1e6;
-    /// @dev Same plausibility corridor as the deploy script (wstGBP per USDC, WAD).
+    /// @dev Same plausibility corridor as the deploy script (wstGBP per USDC, WAD); FAIR_MAX = 1e18
+    ///      also rejects an orientation flip (see DeployUsdcHook — the inverse ≈ 1.34e18).
     uint256 internal constant FAIR_MIN = 0.4e18;
-    uint256 internal constant FAIR_MAX = 1.5e18;
+    uint256 internal constant FAIR_MAX = 1.0e18;
 
     function run() external returns (PoolKey memory key) {
         UsdcWstGbpHook hook = UsdcWstGbpHook(vm.envAddress("USDC_HOOK"));

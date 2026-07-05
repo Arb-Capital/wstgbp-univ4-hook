@@ -131,14 +131,29 @@ venue): zero edits on this track.
       notionals and 0.5x ranks 16–23 in trend-2025; (c) ramp-up: from start-at-fair the
       conveyor arms only once accumulated ratchets exceed ~half-band+stable+fee ≈ 22.5bps;
       (d) at ≥1 gwei the conveyor is gas-marginal on 250k POL (gas table in RESULTS_USDC.md)
-- [x] Phase A5 `DeployUsdcHook.s.sol` + `InitUsdcPool.s.sol` (spacing 1, corridor 0.4–1.5e18;
+- [x] Phase A5 `DeployUsdcHook.s.sol` + `InitUsdcPool.s.sol` (spacing 1; corridor now
+      0.4–1.0e18 after readiness finding B-1;
       dry-run green vs live mainnet, fair 0.7454e18; full anvil rehearsal: init deviation
       0 ppm) + Makefile targets + DEPLOY.md USDC section (incl. static-pool LP migration) +
       USER_GUIDE + README section + check_feeds USDC/USD depeg probe (live-validated) +
       `usdc_fallback_minutes.sql` + cross-venue reason-code table. simParams() carries a
       PLACEHOLDER banner until RESULTS_USDC.md lands
-- [ ] Readiness pass, then user-executed: deploy + init + verify + POL funding via UI + migrate
-      the static-pool LP; external audit joins `src/weth/`'s future scope
+- [x] Production-readiness pass (2026-07-05, `docs/READINESS_USDC_WSTGBP_2026-07-05.md`):
+      **GO with three conditions** (commit-before-broadcast; invariant gate re-run at the final
+      rev if code changes; launch-POL risk acceptance). Fresh evidence: 353/353 fast tests,
+      100% coverage on `src/usdc/`, **29/29 invariants across all 5 suites on the authenticated
+      Alchemy RPC** (816s, zero aborts), snapshot-check stable, deploy dry-run + full anvil
+      rehearsal at 0 ppm incl. the re-run guard (`PoolAlreadyInitialized`), live feeds + USDC peg
+      healthy. Two independent reviewers, **zero must-fix**; 3 should-fix applied same-day:
+      B-1 corridor tightened to FAIR_MAX 1.0e18 (the 1.5e18 corridor could NOT catch an
+      orientation flip on a ~1:1 pair — inverse fair 1.342e18 passed), B-2 U4 efficiency figure
+      8×→17×, B-3 check_feeds depeg path alert-contract fix (red/green verified). New this pass:
+      production-params smoke tests (`test_productionSimParams*` — the shipped slope-1.0x literals
+      proven checkParams-valid + correctly priced + quoter-exact on-chain), full static-pool
+      poolId reconstructed and recorded (`0xbe0ffd8b…bf3bb10`, fee 500/spacing 10)
+- [ ] User-executed: commit/push (condition 1) → deploy + init + verify + POL funding via UI +
+      migrate the static-pool LP (DEPLOY.md §U5) + Dune decode; external audit joins
+      `src/weth/`'s future scope
 
 ## Decision (2026-06-03): ship the pure backstop, defer the hybrid
 

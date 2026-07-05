@@ -24,7 +24,6 @@ import concurrent.futures as cf
 import hashlib
 import pathlib
 import subprocess
-import subprocess
 
 from wethsim import feemath
 
@@ -238,8 +237,9 @@ def render(regimes, nav_cfg, cells, winner, win_cfg, gas_rows, out_path, git_rev
     p = win_cfg.params
     lines.append("## Recommended starting FeeParams (9-field USDC-venue shape)\n")
     lines.append(f"Winner by worst-case cross-cell rank: **{winner}**. Review the tables before")
-    lines.append("adopting — the block below feeds `script/DeployUsdcHook.s.sol::simParams()` and is")
-    lines.append("duplicated in that venue's test constants.\n")
+    lines.append("adopting — the block below feeds `script/DeployUsdcHook.s.sol::simParams()`, which the")
+    lines.append("production-params smoke tests import directly (no duplicated constants; the fork fixture")
+    lines.append("deliberately keeps separate working defaults).\n")
     lines.append("```")
     lines.append(f"baseFeeMintSide       = {p.base_fee_mint_side}")
     lines.append(f"baseFeeRedeemSide     = {p.base_fee_redeem_side}")

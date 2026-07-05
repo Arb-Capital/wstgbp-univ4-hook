@@ -53,7 +53,8 @@ directional base fee on opening flow (asserted: exactly base, no surcharge) plus
 against POL; the deviation it creates **arms the surcharge for whoever closes**, including its own
 accomplice (asserted: closing leg paid > base). Measured: the pair's combined fair-valued PnL for a
 push-to-+1%-and-close round trip is **−15.09 wstGBP** — strictly negative and larger than the
-entire closing-leg fee (no fee "redirection" could fund it). Size only scales the loss.
+entire closing-leg fee (no fee "redirection" could fund it). Size only scales the loss (an
+argument from the fee/impact structure — the executed check runs one representative size).
 
 Residual (accepted): pushing the pool can force third parties to pay a surcharge they otherwise
 wouldn't — a griefing vector that costs the griefer base fee + impact per push and earns them
@@ -89,13 +90,19 @@ parameter (sim-derived), not a mechanism property; the no-cliff property holds a
 
 ## 5. Oracle fallback under load — one verdict per transaction
 
-**Test:** `test_fallbackConsistentUnderLoadWithinTransaction`; the full failure taxonomy is covered
-per-cause in `test/UsdcWstGbpHook.t.sol` (feed reverting / garbage / stale / absurd,
-`navprice() == 0`, everything broken simultaneously).
+**Test:** `test_fallbackConsistentUnderLoadWithinTransaction`; the failure taxonomy is covered
+per-cause across two levels: hook-level in `test/UsdcWstGbpHook.t.sol` (feed reverting / zero
+answer / stale, `navprice() == 0`, everything broken simultaneously) and unit-level in
+`test/UsdcWstGbpOracleLib.t.sol` (additionally garbage/short returns and absurd >MAX_ANSWER
+answers, per reason code); the hook-level never-revert fuzz spans the absurd range.
 
 A flapping oracle mid-bundle cannot produce inconsistent pricing or a revert: the transaction's
 first oracle verdict (fair price or fallback) is cached in transient storage and rules every swap
-in that transaction; `OracleFallback` emits once per transaction with the causal reason. Design
+in that transaction; `OracleFallback` emits once per transaction with the causal reason (asserted
+by `test_fallbackVerdictCachedWithinTransaction`). Exception, by design: while the owner PAUSE is
+active the event emits per swap with reason 0xFF (the pause path never touches the cache) — an
+off-chain counter mixing per-tx (codes 1-4) and per-swap (0xFF) semantics must account for that
+(noted in `monitoring/dune/usdc_fallback_minutes.sql`). Design
 invariant #1 (never brick the pool) is enforced by construction — `_beforeSwap` has no
 oracle-dependent revert path — and fuzzed (`testFuzz_swapNeverRevertsOnOracleState`).
 
@@ -158,5 +165,6 @@ directions — LPs and routers observe `FeeParamsSet`/`PausedSet` events and rou
 Single-feed trust surface: this venue's whole Chainlink dependence is ONE feed (GBP/USD,
 86400s heartbeat / 0.15% deviation) plus the wrapper's NAV — narrower than the WETH venue's two
 feeds. The staleness window (`gbpUsdStalenessSec`, default 90_000 = heartbeat + margin) lives in
-`FeeParams` and is owner-retunable; a retune can flip an unchanged feed fresh↔stale (covered:
+`FeeParams` and is owner-retunable; a retune can flip an unchanged feed from fresh to stale — and
+symmetrically back — (the fresh→stale direction is the covered one:
 `test_stalenessRetuneFlipsFreshFeedIntoFallback`).

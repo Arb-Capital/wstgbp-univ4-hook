@@ -224,7 +224,9 @@ targets: `make deploy-usdc-hook[-dry]`, `make init-usdc-pool[-dry]`, `make verif
 
 ```bash
 make deploy-usdc-hook-dry     # keyless; asserts feed decimals, USDC decimals==6, fair corridor
-                              # (0.4e18–1.5e18 wstGBP/USDC), mining, exact flag bits 0x20C0
+                              # (0.4e18–1.0e18 wstGBP/USDC; the 1.0e18 ceiling also rejects an
+                              # orientation flip — readiness finding B-1), mining, exact flag
+                              # bits 0x20C0
 # full two-step rehearsal on a persistent anvil fork (validated 2026-07-05: 0 ppm init
 # deviation, pool price 1.3416 USDC/wstGBP vs live burn/mint anchors):
 anvil --fork-url $ETH_RPC_URL --gas-limit 3000000000 &   # match foundry.toml gas_limit
@@ -252,16 +254,20 @@ DECISION is venue-specific and is made at funding time from live fair:
 - Method: bracket = cable envelope × NAV horizon.
   Worked example (1-year horizon): cable 1.20–1.45, NAV 1.005–1.055 ⇒ USDC-per-wstGBP
   **min 1.206 / max 1.530** (as wstGBP-per-USDC: 0.654–0.829) — a ~×1.27 geometric band,
-  ~8× full-range efficiency; the UI snaps to spacing 1 (ticks ≈ −274.4k…−272.1k region).
+  ~17× full-range efficiency (geometric-mid formula `1/(1−(Pa/Pb)^(1/4))`, the same convention as
+  the §4 WETH figure); the UI snaps to spacing 1 (ticks ≈ −274.4k…−272.1k region).
 - Tighter is more capital-efficient but re-ranges sooner: the ratchet alone consumes ~5%/yr of
   headroom toward the max bound. Yearly review, same trigger logic as §4.
 - **Small test add first**, probe swap, confirm the fee schedule (mint side = wstGBP in), then
   real size. sim/RESULTS_USDC.md's POL assumption is 250k wstGBP — revisit fee conclusions if
   funding materially differs.
 
-## U5. Migrating out of the static 5bps pool (`0xbe0f…bb10`)
+## U5. Migrating out of the static 5bps pool
 
-The predecessor pool keeps running the unprotected conveyor as long as it holds LP. Once the hook
+The predecessor pool's full identity (recomputed and matched against the observed id): poolId
+`0xbe0ffd8b92d2610cc4491e5bfcd7f51312c0868183c9b0da577a6f131bf3bb10` = keccak256 of
+PoolKey(currency0 = wstGBP `0x57C3…B7aE`, currency1 = USDC `0xA0b8…eB48`, fee 500, tickSpacing 10,
+hooks = 0x0). It keeps running the unprotected conveyor as long as it holds LP. Once the hook
 pool is funded:
 
 1. UI → Positions → the static 5bps wstGBP/USDC position → **Collect fees**, then **Remove
