@@ -5,6 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {ISignatureTransfer} from "permit2/src/interfaces/ISignatureTransfer.sol";
 
+import {RpcUrl} from "./RpcUrl.sol";
+
 /// @dev Permit2 exposes its EIP-712 domain separator for signing test permits.
 interface IPermit2DomainSeparator {
     function DOMAIN_SEPARATOR() external view returns (bytes32);
@@ -31,7 +33,7 @@ abstract contract ForkBase is Test {
     );
 
     function setUp() public virtual {
-        vm.createSelectFork(vm.envOr("ETH_RPC_URL", string("https://ethereum-rpc.publicnode.com")));
+        vm.createSelectFork(RpcUrl.resolve(vm));
         _forceMarketOpen();
     }
 

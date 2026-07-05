@@ -12,6 +12,8 @@ import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Mini
 import {PoolDonateTest} from "@uniswap/v4-core/src/test/PoolDonateTest.sol";
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+
 import {WethWstGbpForkBase} from "./base/WethWstGbpForkBase.sol";
 import {POLCompounder} from "../src/weth/POLCompounder.sol";
 import {OracleLib} from "../src/weth/lib/OracleLib.sol";
@@ -210,6 +212,61 @@ contract POLCompounderTest is WethWstGbpForkBase {
         assertTrue(sawSkip, "skip emitted");
         assertFalse(sawRebalance, "never trades without an oracle bound");
         assertGt(_bal(WSGEM, address(comp)), 0, "one-sided remainder carried as dust");
+    }
+
+    /// @notice The `_fitLiquidity` rounding guard, exercised directly (via {FitHarness}): an
+    ///         over-promising liquidity is decremented to the largest value whose ROUND-UP amounts
+    ///         fit the availables. Unreachable through `compound()` itself — an L computed by
+    ///         `getLiquidityForAmounts` from the same availables at the same price always fits by
+    ///         the libraries' rounding directions (pinned by the fuzz below); the guard is
+    ///         defense-in-depth against that lemma drifting under a library change.
+    function test_fitLiquidityDecrementsOverPromisedInput() public {
+        FitHarness h = _fitHarness();
+        (uint160 sqrtP,,,) = _slot0();
+        uint256 a0 = 1_000 * WAD;
+        uint256 a1 = a0 * SEED_WETH / SEED_WSG;
+        uint128 honest =
+            LiquidityAmounts.getLiquidityForAmounts(sqrtP, comp.sqrtLowerX96(), comp.sqrtUpperX96(), a0, a1);
+        assertGt(honest, 0, "availables fund a position");
+
+        // Feed the guard a deliberately over-promising L: it must land exactly on the largest
+        // fitting value — which is the honest L (round-up amounts at honest+k exceed an available).
+        uint128 fitted = h.exposedFitLiquidity(sqrtP, honest + 3, a0, a1);
+        assertLt(fitted, honest + 3, "guard decremented");
+        assertTrue(h.exposedFits(sqrtP, fitted, a0, a1), "landed value fits");
+        assertFalse(h.exposedFits(sqrtP, fitted + 1, a0, a1), "landed value is the largest fitting one");
+
+        // Degenerate input: nothing fits at all => clamps to zero (compound would then revert
+        // NothingToCompound rather than attempt an unsettleable add).
+        assertEq(h.exposedFitLiquidity(sqrtP, 5, 0, 0), 0, "unfundable input clamps to zero");
+    }
+
+    /// @notice Pins the lemma that makes the guard a no-op in the real flow: for ANY availables,
+    ///         the liquidity `getLiquidityForAmounts` computes from them already fits its own
+    ///         round-up charging at the same price.
+    function testFuzz_forwardLiquidityAlwaysFits(uint256 a0, uint256 a1) public {
+        FitHarness h = _fitHarness();
+        (uint160 sqrtP,,,) = _slot0();
+        a0 = bound(a0, 0, 1e30);
+        a1 = bound(a1, 0, 1e30);
+        uint128 l = LiquidityAmounts.getLiquidityForAmounts(sqrtP, comp.sqrtLowerX96(), comp.sqrtUpperX96(), a0, a1);
+        if (l == 0) return;
+        assertTrue(h.exposedFits(sqrtP, l, a0, a1), "forward-computed L fits round-up charging");
+        assertEq(h.exposedFitLiquidity(sqrtP, l, a0, a1), l, "guard is a no-op on honest input");
+    }
+
+    function _fitHarness() internal returns (FitHarness) {
+        return new FitHarness(
+            PM,
+            key,
+            tickLower,
+            tickUpper,
+            IAggregatorV3(ETH_USD_FEED),
+            IAggregatorV3(GBP_USD_FEED),
+            wrapper,
+            WETH,
+            owner
+        );
     }
 
     // ---------------------------------------------------------------- spec test 3: idle drag
@@ -506,5 +563,29 @@ contract POLCompounderTest is WethWstGbpForkBase {
                 "only declared reverts"
             );
         }
+    }
+}
+
+/// @dev White-box harness exposing the internal rounding-guard pair for direct unit coverage
+///     (`_fitLiquidity`'s decrement is unreachable through `compound()` — see the tests above).
+contract FitHarness is POLCompounder {
+    constructor(
+        IPoolManager pm,
+        PoolKey memory key,
+        int24 tickLower_,
+        int24 tickUpper_,
+        IAggregatorV3 ethUsd,
+        IAggregatorV3 gbpUsd,
+        Iwsgem wrapper_,
+        address weth_,
+        address owner_
+    ) POLCompounder(pm, key, tickLower_, tickUpper_, ethUsd, gbpUsd, wrapper_, weth_, owner_) {}
+
+    function exposedFitLiquidity(uint160 sqrtP, uint128 l, uint256 a0, uint256 a1) external view returns (uint128) {
+        return _fitLiquidity(sqrtP, l, a0, a1);
+    }
+
+    function exposedFits(uint160 sqrtP, uint128 l, uint256 a0, uint256 a1) external view returns (bool) {
+        return _fits(sqrtP, l, a0, a1);
     }
 }

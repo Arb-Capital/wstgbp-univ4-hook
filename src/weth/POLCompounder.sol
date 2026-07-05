@@ -282,11 +282,12 @@ contract POLCompounder is IUnlockCallback, Ownable2Step {
 
         // 4. Add the max liquidity the availables fund at the (post-rebalance) price.
         (uint160 sqrtP,,,) = poolManager.getSlot0(poolId);
-        liquidityAdded = LiquidityAmounts.getLiquidityForAmounts(sqrtP, sqrtLowerX96, sqrtUpperX96, avail0, avail1);
-        // Rounding guard: never promise amounts the availables cannot cover.
-        while (liquidityAdded > 0 && !_fits(sqrtP, liquidityAdded, avail0, avail1)) {
-            liquidityAdded--;
-        }
+        liquidityAdded = _fitLiquidity(
+            sqrtP,
+            LiquidityAmounts.getLiquidityForAmounts(sqrtP, sqrtLowerX96, sqrtUpperX96, avail0, avail1),
+            avail0,
+            avail1
+        );
         if (liquidityAdded == 0) revert NothingToCompound();
         poolManager.modifyLiquidity(
             key, ModifyLiquidityParams(tickLower, tickUpper, int256(uint256(liquidityAdded)), POSITION_SALT), ""
@@ -398,6 +399,19 @@ contract POLCompounder is IUnlockCallback, Ownable2Step {
             + int256(IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(this)));
         avail0 = net0 > 0 ? uint256(net0) : 0;
         avail1 = net1 > 0 ? uint256(net1) : 0;
+    }
+
+    /// @dev Rounding guard: clamp `l` down until its round-up amounts fit the availables, so the add
+    ///      can never promise amounts the compound cannot settle (which would revert mid-unlock).
+    ///      For an `l` computed by `getLiquidityForAmounts` from the SAME availables at the SAME
+    ///      price the loop is a no-op by the libraries' rounding directions (forward floors against
+    ///      a conservative intermediate; round-up charging is integer-bounded) — it is
+    ///      defense-in-depth against that lemma drifting under a library change.
+    function _fitLiquidity(uint160 sqrtP, uint128 l, uint256 avail0, uint256 avail1) internal view returns (uint128) {
+        while (l > 0 && !_fits(sqrtP, l, avail0, avail1)) {
+            l--;
+        }
+        return l;
     }
 
     function _fits(uint160 sqrtP, uint128 l, uint256 avail0, uint256 avail1) internal view returns (bool) {

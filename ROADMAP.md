@@ -39,19 +39,40 @@ All quantities ppm. See the README section "WETH/wstGBP dynamic-fee venue".
   + `InitWethPool.s.sol` (compounder-bootstrap POL seed) + Makefile targets + `DEPLOY.md` runbook
   + `monitoring/dune/*.sql` (real topic0s) + `monitoring/check_feeds.sh` (live-validated)
 - [x] Phase 7 `POLCompounder` (direct PoolManager locker, single-unlock compound, oracle-bounded
-  rebalance) + fork suite (22) + keeper runbook (`DEPLOY.md` §7)
+  rebalance) + fork suite (23) + keeper runbook (`DEPLOY.md` §7)
+- [x] Production-readiness pass (2026-07-04, `docs/READINESS_WETH_WSTGBP_2026-07-04.md`): all
+  suites re-run green at `1b03a01`, coverage re-verified, deploy+init rehearsed end-to-end on an
+  anvil fork (0 ppm init deviation), feeds live-verified, fresh two-reviewer security review
+  (no must-fix; the one should-fix — OracleLib uint80-decode residual revert path, F-1 — was
+  applied the same day, see the [x] entry below),
+  NEW stateful invariant suites `WethWstGbpHookInvariants` (8 invariants, etched settable feeds,
+  independent fee mirror + transient-cache canary, stock-quoter parity per swap) and
+  `POLCompounderInvariants` (custody/principal/declared-reverts), + 2 stateless edge tests
+  (staleness-window retune → fallback; two live pools price their own deviation);
+  DEPLOY.md hardened (init-frontrun recovery, compounder migration ownership-before-funds);
+  SECURITY_WETH_WSTGBP.md §7 (compounder threat model) added
 
 Decision (2026-07-04, funding UX): POL is funded **via the Uniswap UI** from the treasury Safe
 (PositionManager NFT; UI path pinned by `test/WethWstGbpPositionManager.t.sol` against the real
-mainnet PosM incl. the treasury bracket ticks −91,140/−68,640). `InitWethPool.s.sol` is init-only
+mainnet PosM incl. the chosen treasury bracket ticks −88,920/−69,360). `InitWethPool.s.sol` is init-only
 (no funds); `POLCompounder` moved out of the launch path to optional automation (DEPLOY.md
 appendix) — the fire-and-forget requirement beat keeper infra; never-compounding drag ≈ 0.5%/yr at
 10% fee APR vs the measured fee-policy alpha. Range bounds are GBP-native (cable drift documented
-in README); cable-hardened $1,400–$10,000 bracket computed for cable 1.10–1.45.
+in README); cable-hardened bracket FINALIZED 2026-07-04 at $1,500–$8,000 across cable 1.10–1.45,
+efficiency-first (ticks −88,920/−69,360, ~2.59×; NAV-drift re-range trigger in DEPLOY.md §4;
+supersedes the $1,400–$10,000 draft — PosM UI-rehearsal test updated to the chosen ticks).
 
 Open (post-implementation):
+- [x] OracleLib F-1 should-fix APPLIED (2026-07-04): `latestRoundData` decoded as five full words
+      (was `(uint80, …, uint80)` — dirty high bits in the ignored words could revert in the hook's
+      frame and brick swaps). Red/green-verified via `MODE_DIRTY_WORDS` +
+      `test_dirtyUint80WordsStillReadable`; 267/267 after; snapshot regenerated (read got ~0.8k
+      cheaper); coverage still 100% on OracleLib
+- [ ] POLCompounder pre-adoption items (only if/when adopted): ban-list recovery fork test
+      (banned compounder: compound bricks, withdraw-to-third-party succeeds), bound `setStaleness`
+      (nonzero, sane ceiling) or accept as owner foot-gun, flipped-ordering compounder test
 - [ ] Mainnet deploy per `DEPLOY.md` (hook → verify → init-only pool → UI funding from the Safe →
-      monitors)
+      monitors); commit/push `1b03a01` + the readiness-pass work first and record the deploy rev
 - [ ] Aggregator/routing submissions (1inch/Odos/0x/CoW) with the quoter-parity results; confirm
   the Uniswap routing API picks up dynamic-fee hook pools (spec §7)
 - [ ] Announce fee semantics publicly (searchers must be able to model the band)

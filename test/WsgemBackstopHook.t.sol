@@ -876,12 +876,15 @@ contract WsgemBackstopHookForkTest is WsgemForkBase {
     }
 
     /// @notice The hook's low-level transfer helper accepts ERC20s that return no data.
+    /// @dev The harness is placed at a hand-picked flag-valid address via `deployCodeTo` rather than
+    ///      mined: in-test HookMiner mining made this test's gas depend on the harness metadata hash
+    ///      (i.e. on ANY edit anywhere in the compilation unit), flapping the gas snapshot by 100M+.
     function test_safeTransferAllowsNoReturnTokens() public {
         uint160 flags =
             uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
-        bytes memory args = abi.encode(PM, wrapper);
-        (, bytes32 salt) = HookMiner.find(address(this), flags, type(SafeTransferHarness).creationCode, args);
-        SafeTransferHarness harness = new SafeTransferHarness{salt: salt}(PM, wrapper);
+        address harnessAddr = address(uint160(0x5AFE) << 20 | flags); // exact flag bits, arbitrary high bits
+        deployCodeTo("WsgemBackstopHook.t.sol:SafeTransferHarness", abi.encode(PM, wrapper), harnessAddr);
+        SafeTransferHarness harness = SafeTransferHarness(harnessAddr);
         NoReturnToken token = new NoReturnToken();
         address bob = address(0xB0B2);
 

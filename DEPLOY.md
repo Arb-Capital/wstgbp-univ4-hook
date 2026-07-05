@@ -16,12 +16,20 @@ wstGBP `0x57C3…B7aE`.
 |---|---|---|
 | `ETH_RPC_URL` | everything | archive/full RPC |
 | `ETH_FROM` / `ETH_KEYSTORE` | broadcasts | deployer address + encrypted keystore (forge prompts for the password) |
-| `ETHERSCAN_API_KEY` | hook deploy | `--verify` |
+| `ETHERSCAN_API_KEY` | `verify-weth-hook` (step 3½, after init) | `--verify` on the resumed broadcast |
 | `WETH_HOOK` | init | hook address from step 2 |
 
 Checklist:
 
 - [ ] `make test && make test-invariant` green at the deploy commit; record `git rev-parse HEAD`.
+      The invariant gate MUST run against an authenticated archive RPC (`.env` `ALCHEMY_API_KEY`
+      or `ETH_RPC_URL` — see `.env.example`): the public fallback 403s on archive requests partway
+      through long invariant campaigns, which aborts suites without proving anything.
+- [ ] Working tree is **clean** at that commit (`git status --porcelain` empty) — never deploy
+      from a dirty tree; the recorded rev must BE the deployed code.
+- [ ] Risk acceptance, stated consciously: `src/weth/` is first-party-reviewed only (outside the
+      backstop audit scope — AUDIT_SCOPE.md). Launch = small, capped POL; **scale-up is gated on
+      the venue's own external audit.**
 - [ ] Re-verify feed heartbeats/deviations against Chainlink docs **today** (README table has the
       2026-07-04 values: ETH/USD 3600s/0.5%, GBP/USD 86400s/0.15%); retune the staleness windows in
       `DeployWethHook.simParams()` if they changed.
@@ -51,16 +59,13 @@ initializes at that fair price and asserts the on-chain deviation < 10 bps (typi
 ## 2. Hook deploy — mainnet
 
 ```bash
-ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… ETHERSCAN_API_KEY=… make deploy-weth-hook
+ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… make deploy-weth-hook
 ```
 
-Record the hook address; confirm Etherscan verification. The hook is owned by the multisig **from
-construction** — no acceptance step, no deployer-owned window. Spot checks:
-
-```bash
-cast call $WETH_HOOK "owner()(address)"   # 0x846a…4f7c
-cast call $WETH_HOOK "paused()(bool)"     # false
-```
+Record the hook address from the logs and **go straight to step 3** — the deploy target
+deliberately does not verify inline, so the terminal is free the moment the tx confirms.
+Etherscan verification is step 3½ (`make verify-weth-hook`, race-free). The hook is owned by the
+multisig **from construction** — no acceptance step, no deployer-owned window.
 
 ## 3. Pool init — mainnet (one cheap tx, no funds)
 
@@ -70,6 +75,38 @@ WETH_HOOK=<hook> ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… make init-weth-po
 ```
 
 Record the logged PoolId and init tick. Re-running reverts (pool already initialized).
+
+**Minimize the init race window.** Initialization is permissionless and the canonical PoolKey is
+predictable the moment the hook address is public, so treat deploy→init as one sequence: run
+`make init-weth-pool` **immediately** after the deploy tx confirms — do NOT wait for Etherscan
+verification (nothing in init depends on it; verify afterwards). For a zero-width window, submit
+both txs as a private bundle (e.g. Flashbots Protect RPC as `ETH_RPC_URL` for the two broadcasts).
+
+**If the init tx reverts with pool-already-initialized** (someone front-ran the key): do NOT fund
+anything yet. Read slot0 and compare against oracle fair (the script's pre-flight math), then:
+
+- *Pool has zero liquidity* (bare hostile init): the price is free to move — execute a dust swap
+  with `sqrtPriceLimitX96` set at the fair target (it walks slot0 to the limit with ~zero amounts),
+  re-check deviation < 10 bps, then fund.
+- *Pool has nontrivial liquidity at an off-fair price*: the attacker's liquidity is mispriced
+  inventory, and the fee schedule is arb-friendly (the linear surcharge takes at most half the
+  deviation edge, capped at 60 bps) — but do NOT assume profit; net PnL also depends on gas, the
+  amount needed to reach fair, and the path-integral slippage through their range. **Simulate the
+  exact closing swap first** (stock Quoter quote at the fair-target `sqrtPriceLimitX96`, compare
+  output value at oracle fair) and execute only profit-bounded (`minAmountOut` from the quote) —
+  or simply wait for searchers to do it. Either way, fund ONLY once deviation < 10 bps.
+- *Pool cannot be normalized* (pathological state): do NOT fund the canonical key. The hook
+  accepts any tickSpacing, so with owner/team sign-off initialize an **alternate PoolKey** (same
+  currencies + hook, different tickSpacing, e.g. 30) at fair via a modified init run, and record
+  the new canonical key in README/monitoring/integrations before any funding.
+
+## 3½. Verify + spot checks (after init is on-chain)
+
+```bash
+ETH_RPC_URL=… ETHERSCAN_API_KEY=… make verify-weth-hook   # resumes the deploy broadcast, verify-only
+cast call $WETH_HOOK "owner()(address)"   # 0x846a…4f7c
+cast call $WETH_HOOK "paused()(bool)"     # false
+```
 
 ## 4. Funding via the Uniswap UI (the Safe)
 
@@ -82,11 +119,20 @@ treasury bracket below.
 1. app.uniswap.org → connect the Safe → New position → v4 → paste both token addresses
    (wstGBP is not on default lists — expect an "unknown token" notice) → select the pool
    (dynamic-fee, hook `= $WETH_HOOK`; expect a caution banner for an unrecognized hook — ours).
-2. Enter the range as **min/max prices**. For the cable-hardened treasury bracket
-   (WETH $1,400–$10,000 guaranteed across GBP/USD 1.10–1.45; recompute per README if you change it):
-   - quoted as wstGBP per WETH: **min 961 / max 9,048** (ticks −68,640 / −91,140 after snapping)
-   - quoted as WETH per wstGBP (if the UI shows the flipped orientation): **min 0.0001105 / max 0.0010406**
+2. Enter the range as **min/max prices**. **Chosen bracket (2026-07-04, supersedes the earlier
+   $1,400–$10,000 draft): WETH $1,500–$8,000 guaranteed across GBP/USD 1.10–1.45, at current NAV
+   (1.0047), efficiency-first — deliberately NOT NAV-extended:**
+   - quoted as wstGBP per WETH: **min 1,028 / max 7,270** — snaps to **tickLower −88,920 /
+     tickUpper −69,360** (low tick = high wstGBP-per-WETH price; matches
+     `test_uiCustomAsymmetricBracketMints`)
+   - quoted as WETH per wstGBP (if the UI shows the flipped orientation): **min 0.0001375 / max 0.0009725**
+   - ~2.59× full-range efficiency; deposit mix at the 2026-07-04 fair (~1,335) ≈ 18% wstGBP / 82% WETH by value.
    The app snaps to tickSpacing 60 itself.
+   **Accepted tradeoff / re-range trigger:** the NAV ratchet (~4%/yr assumed) drifts the bracket's
+   USD floor upward — ≈$1,500 today, ≈$1,830 at NAV 1.22 (~5y), ≈$2,217 at NAV 1.49 (~10y). Review
+   yearly; re-range (UI: Remove → New position) when the effective floor no longer matches the
+   thesis, e.g. once NAV crosses ~1.2. Recompute any new bracket with the same method:
+   `P = ETH_USD_bound / cable_bound / NAV`, floor at cable 1.45, ceiling at cable 1.10.
 3. **Small test add first** (e.g. 0.1 WETH + matching wstGBP), confirm the position renders and a
    probe swap charges the expected fee, then add the real size. Deposit amounts auto-balance to the
    range ratio in the UI.
@@ -129,14 +175,17 @@ fee (30 bps mint side / 5 bps redeem side at ~zero deviation).
 
 ## Appendix: optional POLCompounder automation
 
-`src/weth/POLCompounder.sol` (fully tested, 22-test fork suite) is an automation upgrade for a
+`src/weth/POLCompounder.sol` (fully tested: 23-test fork suite + the `POLCompounderInvariants`
+stateful suite) is an automation upgrade for a
 future where fee volume justifies keeper-driven compounding: it holds the position directly in the
 PoolManager and compounds in one call (poke → oracle-bounded rebalance ± `toleranceBps` vs the same
 OracleLib fair the hook uses → add liquidity), with principal structurally unable to leave the pool
-during a compound. Migration path: Remove liquidity in the UI → deploy a compounder over the chosen
-range (constructor takes the PoolKey + ticks; owner = deployer for setup) → allowlist a keeper →
-transfer the funds in → `compound()` bootstraps the position → Ownable2Step transfer to the Safe
-(which must `acceptOwnership()`, selector `0x79ba5097`). Keeper policy if adopted: compound when
+during a compound. Migration path — **ownership must reach the Safe BEFORE any funds move** (POL
+must never sit under a hot deployer key): prefer deploying with `_owner = the Safe` directly (the
+constructor supports it; the Safe then sends the one `setKeeper` tx), or if the deployer does setup,
+`transferOwnership(Safe)` + Safe `acceptOwnership()` (selector `0x79ba5097`) first — only then:
+Remove liquidity in the UI → transfer the funds from the Safe to the compounder → keeper
+`compound()` bootstraps the position. Keeper policy if adopted: compound when
 gas < ~150 bps of `compoundable()` value and the pool sits near fair (the rebalance execution-price
 bound budgets the hook's own 30 bps mint-side fee inside the 50 bps default tolerance);
 `NothingToCompound` / `PriceOutOfBounds` reverts are normal and lose nothing.

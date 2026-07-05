@@ -227,6 +227,8 @@ canonical Permit2 instead of this router; the deadline is the permit's). The rou
 forge build
 forge fmt
 ETH_RPC_URL=<archive-or-full-rpc> make test               # fast suites (feature + fuzz); fork — public RPC if unset
+# RPC via optional .env (see .env.example): ETH_RPC_URL > ALCHEMY_API_KEY (composed Alchemy URL) >
+# public fallback — honored by make targets AND direct forge runs (forge auto-loads .env; ForkBase)
 make test-invariant                                       # the slow stateful fork invariant suite (~10 min) only
 make test-all                                             # everything, including the invariant suite
 forge test --match-test test_buyExactInput -vvv           # single test
@@ -319,13 +321,25 @@ Key facts (full detail: README venue section, `SECURITY_WETH_WSTGBP.md`, `DEPLOY
   created at oracle fair, no funds move) → **POL funded via the Uniswap UI from the Safe**
   (standard PositionManager NFT; `test/WethWstGbpPositionManager.t.sol` pins the UI call shape).
   `POLCompounder` is optional automation, NOT in the launch path (migration recipe in `DEPLOY.md`
-  appendix). Range decision (2026-07-04): bounds are GBP-native/permanent; cable-hardened treasury
-  bracket WETH $1,400–$10,000 across cable 1.10–1.45 = ticks −91,140/−68,640 (fair 961–9,048
-  wstGBP/WETH, ~2.6× full-range efficiency). Runbook `DEPLOY.md`; monitoring `monitoring/`.
+  appendix). Range decision (2026-07-04, FINAL — supersedes the $1.4k–$10k draft): cable-hardened
+  WETH **$1,500–$8,000** across cable 1.10–1.45 at current NAV, efficiency-first (deliberately not
+  NAV-extended) = **ticks −88,920/−69,360** (1,028–7,270 wstGBP/WETH, ~2.59× full-range
+  efficiency); NAV ratchet drifts the USD floor up (~$2.2k at 10y) — yearly review + re-range
+  trigger documented in `DEPLOY.md` §4. Runbook `DEPLOY.md`; monitoring `monitoring/`.
 - Out of the backstop audit's scope (AUDIT_SCOPE.md notes it); needs its own audit before POL
   scale-up. Sim harness: `sim/` (stdlib Python; `make sim-test` / `make sim-sweep`;
   `make sim-data` fetches Binance bars). Coverage note: gas suite excluded from `make coverage`
   (optimizer-off build breaks gas asserts — `COVERAGE_SKIP` in the Makefile).
+- **Production-readiness pass done 2026-07-04** (`docs/READINESS_WETH_WSTGBP_2026-07-04.md`):
+  everything re-run green, deploy+init rehearsed on anvil, fresh security review (no must-fix;
+  the one should-fix — OracleLib uint80-decode revert path, F-1 — was APPLIED same day:
+  `_readFeed` now decodes five full words; regression `test_dirtyUint80WordsStillReadable`).
+  Stateful suites now exist: `test/WethWstGbpHookInvariants.t.sol` (8 invariants; etched
+  `SettableFeed`s over the Chainlink proxies, independent FeeMath/OracleLib fee mirror per swap +
+  transient-cache canary, stock-quoter parity per swap) and `test/POLCompounderInvariants.t.sol`
+  (custody/principal; runs=32/depth=16 inline) — both under `make test-invariant`, excluded from
+  `make test`/coverage by the `Invariants` name match. Handlers need a payable `receive()`
+  (PoolSwapTest native refund — the documented gotcha).
 
 ## Roadmap / open work
 

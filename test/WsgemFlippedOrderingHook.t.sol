@@ -10,6 +10,7 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
+import {RpcUrl} from "./base/RpcUrl.sol";
 import {WsgemBackstopHook} from "../src/v4/WsgemBackstopHook.sol";
 import {WsgemSwapRouter} from "../src/v4/periphery/WsgemSwapRouter.sol";
 import {WsgemQuoter} from "../src/v4/periphery/WsgemQuoter.sol";
@@ -41,7 +42,7 @@ contract WsgemFlippedOrderingHookTest is Test {
     PoolKey key;
 
     function setUp() public {
-        vm.createSelectFork(vm.envOr("ETH_RPC_URL", string("https://ethereum-rpc.publicnode.com")));
+        vm.createSelectFork(RpcUrl.resolve(vm));
 
         // Etch the mocks at the chosen (ordered) addresses: wsgem below gem ⇒ flipped ordering.
         vm.etch(M_PIP, address(new MockPip()).code);

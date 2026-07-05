@@ -5,7 +5,12 @@ written half of a scenario the suite executes. Numbers quoted are from the suite
 (fixture: fair ≈ 1904.76 wstGBP/WETH, POL L = 1e22 over ±5580 ticks, default `FeeParams`).
 
 Scope covered here: `src/weth/WethWstGbpHook.sol`, `src/weth/lib/FeeMath.sol`,
-`src/weth/lib/OracleLib.sol`. Gas numbers and the cold-path waiver live in the README venue section.
+`src/weth/lib/OracleLib.sol`, and (§7) `src/weth/POLCompounder.sol`. Gas numbers and the cold-path
+waiver live in the README venue section. Stateful coverage: `test/WethWstGbpHookInvariants.t.sol`
+and `test/POLCompounderInvariants.t.sol` (added 2026-07-04) fuzz random interleavings of swaps,
+oracle drift/breakage, LP churn, pause, retunes, compounds, and withdrawals against ghost-recorded
+invariants (fee == independent recomputation, stock-quoter parity, never-revert, no custody;
+compounder principal/custody properties).
 
 ## 1. Trade splitting — verified NOT neutral, and why that is acceptable
 
@@ -94,6 +99,12 @@ that transaction; `OracleFallback` emits once per transaction with the causal re
 invariant #1 (never brick the pool) is enforced by construction — `_beforeSwap` has no
 oracle-dependent revert path — and fuzzed (`testFuzz_swapNeverRevertsOnOracleState`).
 
+Decode totality (F-1 fix, 2026-07-04): `_readFeed` decodes `latestRoundData` returndata as five
+FULL 32-byte words, never as narrow `uint80` types — `abi.decode` validates value-type ranges, so
+narrow types would have let a hostile/upgraded aggregator revert in the hook's own frame via dirty
+high bits in the ignored roundId/answeredInRound words (regression:
+`test_dirtyUint80WordsStillReadable`, red/green-verified against the old decode).
+
 Known limitation (documented in `OracleLib` NatSpec and the README): the wstGBP NAV leg is a
 manually-poked push oracle with **no on-chain staleness signal**. A stale-but-nonzero NAV cannot be
 detected on-chain; the Chainlink legs carry per-feed staleness windows, and NAV divergence is an
@@ -107,3 +118,37 @@ ceiling — the owner cannot set a confiscatory fee) and `setPaused` (pause **ch
 fallbackFee, never blocks swaps**). No upgradeability, no capital custody, no other admin surface.
 Worst-case malicious owner: fees pinned at 10% in both directions — LPs and routers observe
 `FeeParamsSet`/`PausedSet` events and route around the pool.
+
+## 7. POLCompounder — custody threat model
+
+**Tests:** `test/POLCompounder.t.sol` (23) + `test/POLCompounderInvariants.t.sol` (stateful).
+Unlike the fee-only hook, the compounder CUSTODIES the POL principal (directly in the PoolManager
+as its own locker), so its threat model is distinct:
+
+- **Structural cap on the rebalance.** `compound()` never removes principal — the poke credits
+  only accrued fees, and the availables are fees + held dust. A compromised or malicious keeper
+  controls *timing only*; the worst case per compound is the wrong-side surplus of (fees + dust)
+  executed at `toleranceBps` (default 50, hard cap 500) off oracle fair. Repeats don't amplify:
+  each compound consumes the surplus, the next is `NothingToCompound`.
+- **Sandwich defense = execution-price bound.** `_checkExecPrice` bounds what was actually
+  paid/received (v4 partial fills report consumed amounts) against the same OracleLib fair the hook
+  uses, both directions; an out-of-bounds fill reverts the whole compound (keeper retries). In
+  oracle fallback the rebalance is skipped entirely — the compounder never trades without an oracle
+  bound. Residual nuance: the *liquidity add* itself is not oracle-bounded; fees added at a
+  manipulated spot lose ~`d²/8` of the compounded amount on reversion — second-order, bounded by
+  the fees themselves, and pushing the pool costs the attacker fees into POL.
+- **Owner surface.** `withdrawLiquidity` (slippage floors, atomic unwind on breach),
+  `sweep` (own ERC-20 balances only — in-pool principal and un-poked fees are structurally
+  unreachable), `setKeeper`, `setToleranceBps` (≤ 500), `setStaleness`. NOTE: `setStaleness` is
+  NOT bounds-checked (unlike the hook's params) — `0` windows force permanent rebalance-skip,
+  huge windows let the bound track a stale fair; an owner-misconfiguration foot-gun, not an
+  escalation (the owner can withdraw everything anyway).
+- **Migration ordering.** Ownership must reach the Safe BEFORE funds move (see the DEPLOY.md
+  appendix) — the original runbook draft had a window where POL sat under the deployer EOA.
+- **Ban-list exposure.** The compounder holds/transfers wstGBP, so if banned: `compound()` bricks
+  (its own transfers fail `cop.pass`) and held wstGBP dust is stuck, but **principal + fees remain
+  recoverable** — `withdrawLiquidity` pays out via `PoolManager.take` directly to any unbanned
+  `to`, with the compounder never a transfer party. (Recovery path verified against the wrapper
+  source; a dedicated fork test is on the roadmap.)
+- **No strandable value in the PM.** The compounder never mints ERC-6909 claims; every unlock
+  settles both currencies to zero delta (asserted by the invariant suite).

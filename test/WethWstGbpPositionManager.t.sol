@@ -93,12 +93,13 @@ contract WethWstGbpPositionManagerTest is WethWstGbpForkBase {
         assertGt(recoveredValueWsg, 0, "principal recovered");
     }
 
-    /// @notice A custom asymmetric bracket entered as min/max prices in the UI — the exact
-    ///         cable-hardened treasury bracket discussed for launch (fair 961..9,048 wstGBP/WETH,
-    ///         i.e. WETH $1,400..$10,000 across cable 1.10..1.45) — mints and sits in range.
+    /// @notice A custom asymmetric bracket entered as min/max prices in the UI — the CHOSEN
+    ///         cable-hardened treasury bracket (2026-07-04: 1,028..7,270 wstGBP/WETH, i.e. WETH
+    ///         $1,500..$8,000 across cable 1.10..1.45 at current NAV, efficiency-first; see
+    ///         DEPLOY.md §4) — mints and sits in range.
     function test_uiCustomAsymmetricBracketMints() public {
-        int24 lower = -91_140; // WETH cap side (higher WETH price = lower tick)
-        int24 upper = -68_640; // WETH floor side
+        int24 lower = -88_920; // WETH cap side (higher WETH price = lower tick)
+        int24 upper = -69_360; // WETH floor side
         uint256 tokenId = _mint(lower, upper, 1e21);
         assertEq(_posmPositionLiquidity(tokenId, lower, upper), 1e21, "bracket position live");
 

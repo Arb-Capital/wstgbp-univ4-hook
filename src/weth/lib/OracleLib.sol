@@ -110,7 +110,11 @@ library OracleLib {
         (bool ok, bytes memory ret) =
             address(feed).staticcall(abi.encodeWithSelector(IAggregatorV3.latestRoundData.selector));
         if (!ok || ret.length < 160) return (0, 1);
-        (, int256 answer,, uint256 updatedAt,) = abi.decode(ret, (uint80, int256, uint256, uint256, uint80));
+        // Decode as five FULL words: every 32-byte word is a valid uint256/int256, so given the
+        // length check this decode is total. Narrow (uint80) types would let a hostile feed revert
+        // in this frame via dirty high bits in the ignored roundId/answeredInRound words
+        // (`abi.decode` validates value-type ranges) — those words carry no signal used here.
+        (, int256 answer,, uint256 updatedAt,) = abi.decode(ret, (uint256, int256, uint256, uint256, uint256));
         if (answer <= 0 || uint256(answer) > MAX_ANSWER) return (0, 2);
         if (updatedAt > block.timestamp || block.timestamp - updatedAt > stalenessSec) return (0, 3);
         return (uint256(answer), 0);

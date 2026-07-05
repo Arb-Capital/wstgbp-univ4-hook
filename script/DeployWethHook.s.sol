@@ -16,12 +16,14 @@ import {Iwsgem} from "../src/core/interfaces/Iwsgem.sol";
 /// @notice Mines + CREATE2-deploys the `WethWstGbpHook` (fee-only dynamic-fee hook for the
 ///         WETH/wstGBP pool) with the sim-recommended FeeParams (sim/RESULTS.md) baked into the
 ///         constructor and the Arb Capital multisig as owner FROM CONSTRUCTION — no deployer-owned
-///         window, no post-deploy setter step, nothing to accept. Pool init + POL seeding is the
-///         separate `InitWethPool.s.sol` (run after Etherscan verification).
+///         window, no post-deploy setter step, nothing to accept. Pool init is the separate
+///         `InitWethPool.s.sol` and MUST follow IMMEDIATELY (init is permissionless and the
+///         canonical PoolKey is predictable from the hook address — DEPLOY.md §3); Etherscan
+///         verification comes AFTER init, via `make verify-weth-hook` (resumes this broadcast).
 ///
 /// Usage:  make deploy-weth-hook-dry   (keyless mainnet-fork simulation)
-///         ETH_RPC_URL=<rpc> ETH_FROM=<deployer> ETH_KEYSTORE=<keystore.json> \
-///           ETHERSCAN_API_KEY=<key> make deploy-weth-hook
+///         ETH_RPC_URL=<rpc> ETH_FROM=<deployer> ETH_KEYSTORE=<keystore.json> make deploy-weth-hook
+///         then IMMEDIATELY:  WETH_HOOK=<hook> ... make init-weth-pool   (verify afterwards)
 contract DeployWethHook is Script {
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
@@ -117,7 +119,8 @@ contract DeployWethHook is Script {
 
         console2.log("WethWstGbpHook:", address(hook));
         console2.log("owner (multisig):", MULTISIG);
-        console2.log("Next: Etherscan verify (make target does it), then InitWethPool.s.sol.");
+        console2.log("Next: run InitWethPool.s.sol IMMEDIATELY (init race, DEPLOY.md section 3);");
+        console2.log("      Etherscan verify AFTERWARDS: make verify-weth-hook");
     }
 
     function _assertParams(WethWstGbpHook hook, FeeMath.FeeParams memory p) internal view {

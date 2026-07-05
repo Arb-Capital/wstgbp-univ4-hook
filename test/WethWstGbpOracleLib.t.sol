@@ -6,11 +6,13 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {OracleLib} from "../src/weth/lib/OracleLib.sol";
 import {IAggregatorV3} from "../src/weth/interfaces/IAggregatorV3.sol";
 
-/// @dev Configurable Chainlink mock: normal answers, reverts, and short (non-decodable) returns.
+/// @dev Configurable Chainlink mock: normal answers, reverts, short (non-decodable) returns, and
+///      full-length returns whose ignored uint80 words carry dirty high bits (F-1 regression).
 contract MockAggregator {
     uint8 public constant MODE_NORMAL = 0;
     uint8 public constant MODE_REVERT = 1;
     uint8 public constant MODE_SHORT_RETURN = 2;
+    uint8 public constant MODE_DIRTY_WORDS = 3;
 
     int256 public answer;
     uint256 public updatedAt;
@@ -32,6 +34,21 @@ contract MockAggregator {
             assembly {
                 mstore(0, 1)
                 return(0, 64) // 64 bytes < the 160 a well-formed round occupies
+            }
+        }
+        if (mode == MODE_DIRTY_WORDS) {
+            // A well-formed 160-byte round whose roundId/answeredInRound words have every bit set
+            // (invalid as uint80): a narrow-typed abi.decode of these words reverts in the CALLER's
+            // frame, which is exactly what OracleLib must not let happen.
+            int256 a = answer;
+            uint256 u = updatedAt;
+            assembly {
+                mstore(0x00, not(0)) // roundId: dirty beyond uint80
+                mstore(0x20, a)
+                mstore(0x40, u) // startedAt (ignored)
+                mstore(0x60, u)
+                mstore(0x80, not(0)) // answeredInRound: dirty beyond uint80
+                return(0x00, 160)
             }
         }
         return (1, answer, updatedAt, updatedAt, 1);
@@ -171,6 +188,18 @@ contract WethWstGbpOracleLibTest is Test {
 
         ethUsd.set(int256(uint256(1e30) + 1), NOW);
         _assertReason(OracleLib.FallbackReason.ETH_FEED_ANSWER);
+    }
+
+    /// @dev F-1 regression: a >=160-byte round whose IGNORED uint80 words (roundId /
+    ///      answeredInRound) carry dirty high bits must be read normally — never revert.
+    ///      `abi.decode` validates value types, so decoding those words as uint80 would give a
+    ///      hostile/buggy aggregator a revert path in the hook's own frame (swap DoS).
+    function test_dirtyUint80WordsStillReadable() public {
+        ethUsd.setMode(ethUsd.MODE_DIRTY_WORDS());
+        gbpUsd.setMode(gbpUsd.MODE_DIRTY_WORDS());
+        (uint256 fairWad, OracleLib.FallbackReason reason) = _fair();
+        assertEq(uint8(reason), uint8(OracleLib.FallbackReason.NONE), "dirty ignored words read fine");
+        assertEq(fairWad, 1904761904761904761904, "composition unaffected");
     }
 
     function test_ethFeedNoCode() public {

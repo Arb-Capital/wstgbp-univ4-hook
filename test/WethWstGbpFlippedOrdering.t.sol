@@ -15,6 +15,7 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
+import {RpcUrl} from "./base/RpcUrl.sol";
 import {WethWstGbpHook} from "../src/weth/WethWstGbpHook.sol";
 import {FeeMath} from "../src/weth/lib/FeeMath.sol";
 import {Iwsgem} from "../src/core/interfaces/Iwsgem.sol";
@@ -47,7 +48,7 @@ contract WethWstGbpFlippedOrderingTest is Test {
     PoolKey key;
 
     function setUp() public {
-        vm.createSelectFork(vm.envOr("ETH_RPC_URL", string("https://ethereum-rpc.publicnode.com")));
+        vm.createSelectFork(RpcUrl.resolve(vm));
 
         vm.etch(M_WETH, address(new MockToken()).code);
         vm.etch(M_WSGBP, address(new MockWrapperToken()).code);

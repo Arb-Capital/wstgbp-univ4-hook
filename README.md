@@ -130,6 +130,8 @@ wstGBP, `false` is a **SELL**. Both tokens are 18 decimals; all prices are WAD (
 
 ## WETH/wstGBP dynamic-fee venue (`src/weth/`) — implemented, pre-deploy
 
+> Non-developer introduction for traders and LPs: **[`docs/USER_GUIDE_WETH_WSTGBP.md`](docs/USER_GUIDE_WETH_WSTGBP.md)**.
+
 A second, independent v4 hook: **`WethWstGbpHook`**, a **fee-only, oracle-aware dynamic-fee hook**
 for a WETH/wstGBP pool ("volatility antenna" — converts ETH/GBP volatility into arb flow that routes
 through the backstop venue above, while protocol-owned liquidity captures the deviation via fees).
@@ -188,9 +190,12 @@ canonical PositionManager like any pool (`test/WethWstGbpPositionManager.t.sol` 
 call shape against the real mainnet PosM, including the treasury bracket). Launch flow = two script
 txs (deploy hook, init pool at oracle fair — no funds move) + UI funding; see `DEPLOY.md`.
 Range policy: bounds are **GBP-native and permanent** (the pool's coordinate is wstGBP-per-WETH);
-their USD meaning floats with cable and creeps up ~4%/yr with the NAV ratchet. The cable-hardened
-treasury bracket (WETH $1,400–$10,000 guaranteed across GBP/USD 1.10–1.45) is ticks
-**−91,140 / −68,640** ≈ fair 961–9,048 wstGBP/WETH, ~2.6× full-range capital efficiency.
+their USD meaning floats with cable and creeps up ~4%/yr with the NAV ratchet. The chosen
+cable-hardened treasury bracket (2026-07-04, efficiency-first: WETH $1,500–$8,000 guaranteed
+across GBP/USD 1.10–1.45 at current NAV, deliberately not NAV-extended) is ticks
+**−88,920 / −69,360** ≈ 1,028–7,270 wstGBP/WETH, ~2.59× full-range capital efficiency; the NAV
+ratchet drifts the USD floor upward over the years (≈$2.2k after a decade), so `DEPLOY.md` §4
+carries a yearly-review / re-range trigger.
 
 **`POLCompounder`** (`src/weth/POLCompounder.sol`) is **optional automation, not in the launch
 path**: a PoolManager-direct locker that compounds fees in one keeper call (poke → oracle-bounded

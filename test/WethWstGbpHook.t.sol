@@ -5,9 +5,11 @@ import {Vm} from "forge-std/Vm.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
-import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
@@ -66,6 +68,56 @@ contract WethWstGbpHookTest is WethWstGbpForkBase {
         PoolKey memory second = key;
         second.tickSpacing = 10;
         PM.initialize(second, _fairSqrtPriceX96(_fairWad()));
+    }
+
+    /// @dev Two LIVE pools under the one hook, swapped in the same transaction: each swap prices off
+    ///      ITS OWN slot0 deviation, while the pair-level fair price is read from the oracle exactly
+    ///      once and shared across poolIds (the NatSpec claim `_beforeInitialize` rests on).
+    function test_twoLivePoolsPriceTheirOwnDeviation() public {
+        // Second pool: tickSpacing 10, initialized 2% ABOVE fair (d ≈ +20_000 ppm), thin LP.
+        PoolKey memory second = key;
+        second.tickSpacing = 10;
+        uint160 sqrtSecond = _fairSqrtPriceX96(_fairWad() * 102 / 100);
+        PM.initialize(second, sqrtSecond);
+        int24 anchor = TickMath.getTickAtSqrtPrice(sqrtSecond) / 10 * 10;
+        lpRouter.modifyLiquidity(
+            second,
+            ModifyLiquidityParams({tickLower: anchor - 500, tickUpper: anchor + 500, liquidityDelta: 1e20, salt: 0}),
+            ""
+        );
+
+        // One oracle read serves both pools' swaps in this transaction.
+        vm.expectCall(ETH_USD_FEED, abi.encodeWithSelector(IAggregatorV3.latestRoundData.selector), 1);
+        vm.expectCall(GBP_USD_FEED, abi.encodeWithSelector(IAggregatorV3.latestRoundData.selector), 1);
+
+        // Canonical pool at ~zero deviation: redeem side pays base only.
+        SwapObservation memory first = _swapAndObserve(REDEEM_ZF1, -int256(WAD / 100));
+        assertEq(first.pmFee, 500, "canonical pool: base redeem fee at zero deviation");
+
+        // Second pool at +2%: the same redeem side is the CLOSING flow there, and 0.5x(20000-1000)
+        // saturates the 60 bps surcharge cap => exactly base + cap, robust to init rounding.
+        vm.recordLogs();
+        swapRouter.swap(
+            second,
+            SwapParams({
+                zeroForOne: REDEEM_ZF1,
+                amountSpecified: -int256(WAD / 100),
+                sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ""
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool sawSecondSwapFee;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter != address(hook) || logs[i].topics[0] != HOOK_SWAPFEE_SIG) continue;
+            (uint24 fee, int256 d, bool fallbackMode) = abi.decode(logs[i].data, (uint24, int256, bool));
+            assertEq(fee, 500 + 6000, "second pool: base + saturated surcharge off ITS deviation");
+            assertGt(d, 19_000, "second pool's own deviation observed");
+            assertFalse(fallbackMode, "live pricing");
+            sawSecondSwapFee = true;
+        }
+        assertTrue(sawSecondSwapFee, "second pool swap priced by the hook");
     }
 
     function test_constructorState() public view {
@@ -272,6 +324,17 @@ contract WethWstGbpHookTest is WethWstGbpForkBase {
     function test_navZeroPipPausedFallsBack() public {
         _setNav(0);
         _assertFallbackSwap(uint8(OracleLib.FallbackReason.NAV_BAD));
+    }
+
+    /// @dev The staleness windows live in FeeParams, so an owner retune can flip a feed that hasn't
+    ///      changed at all from fresh to stale: the next transaction's swap must fall back.
+    function test_stalenessRetuneFlipsFreshFeedIntoFallback() public {
+        _mockFeed(ETH_USD_FEED, ETH_USD_ANSWER, block.timestamp - 3000); // fresh under 4500s...
+        FeeMath.FeeParams memory p = _defaultParams();
+        p.ethUsdStalenessSec = 2000; // ...stale under the tightened window
+        vm.prank(owner);
+        hook.setFeeParams(p);
+        _assertFallbackSwap(uint8(OracleLib.FallbackReason.ETH_FEED_STALE));
     }
 
     /// @dev Phase 2 acceptance: a swap with BOTH oracles bricked completes and emits OracleFallback.
