@@ -291,7 +291,13 @@ flipped-ordering e2e suite, below):
 - Swaps must be settle-first (input paid before `swap`). Stock swap-first routers revert on `take`;
   route via `WsgemSwapRouter` or a settle-first solver/aggregator integration.
 
-## Second venue: WETH/wstGBP dynamic-fee hook (`src/weth/`, 2026-07-04, pre-deploy)
+## Second venue: WETH/wstGBP dynamic-fee hook (`src/weth/`) — DEPLOYED 2026-07-04
+
+**Mainnet:** hook `0xe5F619EC8Af334Fb54CcEcf6802378cd2100E0c0` (flags `0x20C0`, owner = multisig);
+poolId `0xaa4aebc5147167353ad9ac16d1fcb87e12aef62d9bd870d4bf5762cce166c920` (initialized block
+25463628, tx `0xdaa9cab6…a64905`, tick −71,818, 0 ppm deviation). POL funding + Etherscan verify +
+monitoring activation pending at deploy time; deploy ran from an uncommitted tree — the deploy rev
+MUST be the next commit.
 
 A separate product sharing the repo: **`WethWstGbpHook`**, a fee-only dynamic-fee hook for a
 WETH/wstGBP pool ("volatility antenna" feeding arb flow into the backstop venue), plus

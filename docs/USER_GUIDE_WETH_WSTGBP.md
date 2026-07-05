@@ -1,8 +1,7 @@
 # The WETH/wstGBP Pool — User Guide
 
 *For traders and liquidity providers who know their way around Uniswap but haven't met a v4 hook
-before. Status: implemented and audited-internally, pre-deploy — the hook and pool addresses below
-are filled in at launch.*
+before. Status: **live on Ethereum mainnet since 2026-07-04** (liquidity funding in progress).*
 
 ---
 
@@ -241,8 +240,8 @@ wstGBP anywhere, you already carry it.
 | Uniswap v4 Quoter (stock — quotes this pool exactly) | `0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203` |
 | Chainlink ETH/USD | `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419` |
 | Chainlink GBP/USD | `0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5` |
-| Hook (`WethWstGbpHook`) | *filled in at deploy* |
-| Pool ID | *filled in at pool init* |
+| Hook (`WethWstGbpHook`) | `0xe5F619EC8Af334Fb54CcEcf6802378cd2100E0c0` |
+| Pool ID | `0xaa4aebc5147167353ad9ac16d1fcb87e12aef62d9bd870d4bf5762cce166c920` |
 | Owner multisig | `0x846a655a4fA13d86B94966DFDf4D9a070e554f7c` |
 
 Pool parameters: currency0 = wstGBP, currency1 = WETH, dynamic-fee flag, tickSpacing 60.

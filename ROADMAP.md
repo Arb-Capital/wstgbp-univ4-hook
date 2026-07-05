@@ -71,8 +71,13 @@ Open (post-implementation):
 - [ ] POLCompounder pre-adoption items (only if/when adopted): ban-list recovery fork test
       (banned compounder: compound bricks, withdraw-to-third-party succeeds), bound `setStaleness`
       (nonzero, sane ceiling) or accept as owner foot-gun, flipped-ordering compounder test
-- [ ] Mainnet deploy per `DEPLOY.md` (hook → verify → init-only pool → UI funding from the Safe →
-      monitors); commit/push `1b03a01` + the readiness-pass work first and record the deploy rev
+- [x] Mainnet deploy 2026-07-04: hook `0xe5F6…E0c0` + pool init (block 25463628, 0 ppm) — DONE.
+      NOTE: deployed from an uncommitted tree ahead of the commit gate; the deploy rev must be the
+      very next commit (include the new `broadcast/DeployWethHook.s.sol/1/` +
+      `broadcast/InitWethPool.s.sol/1/` records, matching repo convention)
+- [ ] Post-deploy: `make verify-weth-hook` (Etherscan), POL funding via the UI (bracket ticks
+      −88,920/−69,360 per DEPLOY.md §4: small test add → probe swap → real size), §5 probes after
+      funding, §6 monitoring activation (Dune decode, hourly fallback alert, check_feeds cron)
 - [ ] Aggregator/routing submissions (1inch/Odos/0x/CoW) with the quoter-parity results; confirm
   the Uniswap routing API picks up dynamic-fee hook pools (spec §7)
 - [ ] Announce fee semantics publicly (searchers must be able to model the band)

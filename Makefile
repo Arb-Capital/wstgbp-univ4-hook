@@ -158,11 +158,17 @@ deploy-weth-hook :
 
 # Etherscan-verify the already-broadcast hook deploy (run AFTER init-weth-pool): resumes the
 # recorded broadcast, so constructor args / metadata come from run-latest.json — no re-deploy.
+# Forge requires `--broadcast` + the deployer wallet alongside `--resume` (it validates wallet
+# mappings up front), but SENDS NOTHING: every tx in the record is already mined, so this only
+# submits the Etherscan verification. Use the same ETH_FROM/ETH_KEYSTORE that deployed.
 verify-weth-hook :
 	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (the deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
 	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required"; exit 1; }
-	@$(KEYLESS) forge script script/DeployWethHook.s.sol --rpc-url $(ETH_RPC_URL) \
-		--resume --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
+	@forge script script/DeployWethHook.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		--broadcast --resume --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
 
 # Simulate the INIT-ONLY pool creation (no funds move — POL is funded later via the Uniswap UI;
 # see DEPLOY.md). Needs only WETH_HOOK.

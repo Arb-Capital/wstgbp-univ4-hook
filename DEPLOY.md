@@ -103,7 +103,9 @@ anything yet. Read slot0 and compare against oracle fair (the script's pre-fligh
 ## 3½. Verify + spot checks (after init is on-chain)
 
 ```bash
-ETH_RPC_URL=… ETHERSCAN_API_KEY=… make verify-weth-hook   # resumes the deploy broadcast, verify-only
+# resumes the deploy broadcast, verify-only (sends nothing — all txs already mined; forge
+# nevertheless wants the deployer wallet to validate the resume, so reuse the deploy env):
+ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… ETHERSCAN_API_KEY=… make verify-weth-hook
 cast call $WETH_HOOK "owner()(address)"   # 0x846a…4f7c
 cast call $WETH_HOOK "paused()(bool)"     # false
 ```
@@ -144,7 +146,8 @@ treasury bracket below.
 ## 5. Post-deploy verification
 
 ```bash
-# stock v4 Quoter parity probe (fee-only hook => exact quotes):
+# stock v4 Quoter parity probe (fee-only hook => exact quotes). NOTE: run AFTER funding —
+# an empty pool correctly reverts NotEnoughLiquidity(poolId) on any quote:
 cast call 0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203 \
   "quoteExactInputSingle(((address,address,uint24,int24,address),bool,uint128,bytes))(uint256,uint256)" \
   "(($WSTGBP,$WETH,8388608,60,$WETH_HOOK),true,1000000000000000000,0x)"

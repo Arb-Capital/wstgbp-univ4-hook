@@ -128,7 +128,7 @@ wstGBP, `false` is a **SELL**. Both tokens are 18 decimals; all prices are WAD (
 
 ---
 
-## WETH/wstGBP dynamic-fee venue (`src/weth/`) — implemented, pre-deploy
+## WETH/wstGBP dynamic-fee venue (`src/weth/`) — DEPLOYED 2026-07-04 (POL funding pending)
 
 > Non-developer introduction for traders and LPs: **[`docs/USER_GUIDE_WETH_WSTGBP.md`](docs/USER_GUIDE_WETH_WSTGBP.md)**.
 
@@ -164,6 +164,8 @@ Verified on-chain and against the Chainlink reference data directory on 2026-07-
 
 | Role | Address | Notes |
 |---|---|---|
+| **`WethWstGbpHook`** | `0xe5F619EC8Af334Fb54CcEcf6802378cd2100E0c0` | deployed 2026-07-04 block 25463615, tx `0x4d5134c1…0513`; Etherscan-verified; flags `0x20C0`; owner = multisig from construction |
+| **Pool** (v4 singleton — id, not address) | `0xaa4aebc5147167353ad9ac16d1fcb87e12aef62d9bd870d4bf5762cce166c920` | initialized 2026-07-04 block 25463628, tx `0xdaa9cab6…a64905`, init tick −71,818, deviation 0 ppm |
 | WETH (currency1) | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` | 18 decimals |
 | wstGBP (currency0, the wrapper) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` | `0x57C3… < 0xC02a…` ⇒ wstGBP = currency0 |
 | Chainlink ETH/USD | `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419` | 8 dec; heartbeat **3600s**, deviation **0.5%** → staleness window 4500s |
