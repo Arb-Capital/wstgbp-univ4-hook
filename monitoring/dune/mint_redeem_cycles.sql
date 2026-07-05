@@ -9,6 +9,7 @@ WITH ordered AS (
         lag(varbinary_to_uint256(topic1)) OVER (ORDER BY block_number, index) AS prev_side
     FROM ethereum.logs
     WHERE contract_address = {{hook_address}}
+      AND block_time >= TIMESTAMP '2026-07-04' -- deploy date: partition-prunes the full-history scan
       AND topic0 = 0x501d5d86a8d484bc563346b877c9f64e27cc283c053aed3dc499e4de6ab3173a
 )
 SELECT

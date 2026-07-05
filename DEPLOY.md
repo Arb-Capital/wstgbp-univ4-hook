@@ -163,11 +163,12 @@ Nothing here protects funds; the hook fails soft to a flat 30 bps pool and no re
 time-critical. Monitoring exists for the FEE-POLICY OPERATOR hat (revenue quality: is the
 surcharge actually pricing, or has the pool quietly degraded to fallback?). Pick a tier:
 
-- **Fire-and-forget (recommended baseline):** submit the (verified) hook ABI to Dune decoding,
-  create the committed queries (`monitoring/dune/*.sql`, raw-log-ready), and schedule ONLY
-  `alert_sustained_fallback.sql` hourly with alert-on-results — zero-touch; it emails only when
-  >50% of a trailing hour's swaps priced in fallback. Plus the yearly NAV-drift range review
-  from §4. That's the whole obligation.
+- **Fire-and-forget (recommended baseline; ACTIVATED 2026-07-04):** the queries are created on
+  Dune (IDs in `monitoring/dune/README.md`), deliberately **unscheduled** (free-tier credit
+  policy — the alert costs 0.072 credits/run; schedule it daily (~2 credits/mo) or leave it
+  manual). One-time remaining: submit the verified contract for decoding at
+  dune.com/contracts/new. Plus the yearly NAV-drift range review from §4. That's the whole
+  obligation.
 - **Ops-manual (optional, for active fee-policy management):** additionally cron
   `monitoring/check_feeds.sh` (e.g. daily; 15-min only if you're actively tuning) — it watches
   the oracle root cause the on-chain events can't show (a QUIET pool in fallback emits nothing,

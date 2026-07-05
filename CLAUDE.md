@@ -290,6 +290,9 @@ flipped-ordering e2e suite, below):
   call it need a payable `receive()`.
 - Swaps must be settle-first (input paid before `swap`). Stock swap-first routers revert on `take`;
   route via `WsgemSwapRouter` or a settle-first solver/aggregator integration.
+- The PoolManager `Swap` event logs ZERO amounts for the backstop (return-delta hook cancels the
+  AMM leg) — reconstruct volume from PM↔hook ERC-20 transfer legs (see `monitoring/dune/README.md`).
+  The weth venue's PM Swap amounts are real (fee-only hook, actual AMM).
 
 ## Second venue: WETH/wstGBP dynamic-fee hook (`src/weth/`) — DEPLOYED 2026-07-04
 

@@ -18,6 +18,7 @@ SELECT
     sum(IF(varbinary_to_uint256(varbinary_substring(data, 65, 32)) = 1, 1, 0)) AS fallback_swaps
 FROM ethereum.logs
 WHERE contract_address = {{hook_address}}
+      AND block_time >= TIMESTAMP '2026-07-04' -- deploy date: partition-prunes the full-history scan
   AND topic0 = 0x501d5d86a8d484bc563346b877c9f64e27cc283c053aed3dc499e4de6ab3173a
 GROUP BY 1, 2
 ORDER BY 1 DESC, 2

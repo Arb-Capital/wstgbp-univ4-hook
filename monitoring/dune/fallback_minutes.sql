@@ -14,6 +14,7 @@ WITH fallback_swaps AS (
     SELECT block_time
     FROM ethereum.logs
     WHERE contract_address = {{hook_address}}
+      AND block_time >= TIMESTAMP '2026-07-04' -- deploy date: partition-prunes the full-history scan
       AND topic0 = 0x501d5d86a8d484bc563346b877c9f64e27cc283c053aed3dc499e4de6ab3173a
       AND varbinary_to_uint256(varbinary_substring(data, 65, 32)) = 1
 ),
@@ -24,6 +25,7 @@ reasons AS (
         count(*) AS occurrences
     FROM ethereum.logs
     WHERE contract_address = {{hook_address}}
+      AND block_time >= TIMESTAMP '2026-07-04' -- deploy date: partition-prunes the full-history scan
       AND topic0 = 0xbcb18a4679b96763174578896ce0d13f3639a049ad81eb7c3f96983258ee9bd4
     GROUP BY 1, 2
 )
