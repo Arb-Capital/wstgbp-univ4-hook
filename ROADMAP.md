@@ -82,7 +82,10 @@ Open (post-implementation):
       §6 monitoring fire-and-forget tier (Dune decode + hourly sustained-fallback alert ONLY;
       no cron — the position needs no attention by design), yearly NAV re-range review
 - [ ] Aggregator/routing submissions (1inch/Odos/0x/CoW) with the quoter-parity results; confirm
-  the Uniswap routing API picks up dynamic-fee hook pools (spec §7)
+  the Uniswap routing API picks up dynamic-fee hook pools (spec §7). The 1inch leg is drafted:
+  `docs/AGGREGATOR_LISTINGS.md` §2 bundles the WETH+USDC hook-whitelist ask (fee-only hooks,
+  stock-quoter-exact) into the backstop-adapter outreach (same ask mirrored for Odos §3, comms
+  permitting)
 - [ ] Announce fee semantics publicly (searchers must be able to model the band)
 - [ ] External audit of `src/weth/` before/alongside mainnet POL scale-up (own scope doc TBD;
   see AUDIT_SCOPE.md out-of-scope note + SECURITY_WETH_WSTGBP.md)
@@ -210,11 +213,16 @@ v4 was the special case (settle-first + mined flags). Per-aggregator effort is *
       checks it is not ban-listed. `deploy-dry` validated end-to-end on a mainnet fork.
 - [~] **Off-chain listing (per venue, no Solidity):** step-by-step playbook now in
       **[`docs/AGGREGATOR_LISTINGS.md`](docs/AGGREGATOR_LISTINGS.md)** (2026-07-03): ParaSwap =
-      self-serve `paraswap-dex-lib` PR (templates: `wsteth` constant-price + `lite-psm` caps); Odos =
-      Discord request with the info packet; LI.FI = automatic downstream (its exchange list is
-      aggregators incl. paraswap/odos — verified via li.quest/v1/tools); CoW = forum proposal
-      (`docs/COW_ROUTE_INTEGRATION.md`, drafted). Remaining: execute them. All reuse the *same*
-      deployed adapter.
+      self-serve `paraswap-dex-lib` PR — **submitted**: VeloraDEX/paraswap-dex-lib#1204 "Add
+      wstGBP" (2026-07-03, awaiting review as of 2026-07-09); 1inch = business-channel request,
+      full section added 2026-07-09 (Discord + business-portal support; no self-serve PR for
+      Pathfinder sources; the same outreach bundles the WETH/USDC v4 hook-whitelist ask); Odos =
+      **deprioritized 2026-07-09** — infra alive (API up, ~$280M/30d volume) but comms dormant
+      (their only documented intake is an expired Discord invite; X silent since 2025-12; fallback
+      channels in the playbook §3); LI.FI = automatic downstream (its
+      exchange list is aggregators incl. paraswap/odos/1inch — verified via li.quest/v1/tools); CoW
+      = forum proposal (`docs/COW_ROUTE_INTEGRATION.md`, drafted). Remaining: execute them. All
+      reuse the *same* deployed adapter.
 - [ ] **Repo rename** off `-univ4-hook` (e.g. `wstGBP-venues`) — name only, do when convenient.
 
 ## Decision (2026-07-03): CoW Hook Store dapp via an owner-bound helper
