@@ -394,3 +394,9 @@ and **deferred** (preserved at `b7a5c5a`). Open headlines:
   real gate before mainnet.
 - **Hardening (deferred informational):** I-01 (canonical-PoolKey docs — done in `README.md`), I-04 (pin
   submodule tags / record the audited commit — documented in `AUDIT_SCOPE.md`).
+- **Decision (2026-07-11) — fourth venue:** XAUT/wstGBP (gold/sterling antenna, `src/usdc/` clone,
+  `XAUT_UNIT=1e6`, XAU/USD+GBP/USD two-feed fair), sequenced behind depth + footprint: velocity is
+  currently depth/gas/routing-bound (~$10k POL/pool ≈ 3% of sim scale), so P0 = listings/CoW dapp,
+  P1 = POL deepening (USDC first, straight to sim scale), P2 = build `src/xaut/` (goldsim first; no
+  hard gate). **Audits deprioritized (operator stance 2026-07-11):** the venues serve live MEV flow
+  un-audited — not a scale-up gate; revisit at materially larger POL. Full record in `ROADMAP.md`.

@@ -88,7 +88,9 @@ Open (post-implementation):
   permitting)
 - [ ] Announce fee semantics publicly (searchers must be able to model the band)
 - [ ] External audit of `src/weth/` before/alongside mainnet POL scale-up (own scope doc TBD;
-  see AUDIT_SCOPE.md out-of-scope note + SECURITY_WETH_WSTGBP.md)
+  see AUDIT_SCOPE.md out-of-scope note + SECURITY_WETH_WSTGBP.md). **Deprioritized 2026-07-11
+  (operator stance): not a scale-up gate for now — the venues are serving live MEV flow un-audited;
+  revisit when POL is materially larger.**
 
 ## Track (2026-07-05): wstGBP/USDC dynamic-fee venue (`src/usdc/`)
 
@@ -261,6 +263,78 @@ anyway). The web dapp lives in a **separate repo** (ecosystem convention; keeps 
 - [~] **Track B route-integration doc** — `docs/COW_ROUTE_INTEGRATION.md` drafted (interface, price
       discovery, gating, gas, compliance + forum-post skeleton); remaining: post it on the CoW DAO forum
       (the solver-side listing item above).
+
+## Decision (2026-07-11): fourth venue — XAUT/wstGBP next, but depth + footprint first
+
+Deep-dive on "what should the fourth v4 pool be to maximize velocity". Objective clarified with the
+operator: **adoption / footprint** (wstGBP as money — venues, holders, organic flow, aggregator
+presence), with meaningful POL capital available (~$50k–250k+). Verdict in two parts:
+
+**1. Deepen + route before triangulating — velocity today is depth/gas/routing-bound, not
+venue-count-bound.** Live reads (2026-07-11): backstop 19 swaps in its first ~2 weeks (£1–£200
+notionals, mostly third-party MEV lockers); WETH antenna 42 swaps / ~1,152 wstGBP in week 1
+(realized fees 5–90bps, avg ~49bps); USDC antenna 33 swaps / ~1,354 wstGBP in 6 days (avg ~33bps) —
+each on ~$10k POL (velocity ≈ 0.15–0.2× TVL/week), i.e. ~3% of the sims' POL assumptions
+(250k / 1M wstGBP). The arb bot logs both dynamic venues "venue unpriceable this pass". The USDC
+sim already showed the conveyor gas-marginal at ≥1 gwei *even at 250k POL*, and organic flow at
+1/hr worth ~20× conveyor-only house take (15,093 vs 724 USD per ~4 months). **Operator stance
+(2026-07-11): audits are deprioritized for now** — the venues are already serving live MEV flow
+un-audited, and scale-up proceeds at operator risk tolerance (supersedes the WETH track's
+audit-before-scale-up gate). That leaves **capital deployment + routing as the only real
+constraints**: the aggregator/CoW listings (in flight above) are the zero-capital lever, and depth
+begets routing — aggregators only send organic flow through pools that quote competitively.
+
+**2. Venue #4 = XAUT/wstGBP** (Tether Gold `0x68749665FF8D2d112Fa859AA293F07A622782F38`) — the
+first on-chain gold/sterling market. Not because "uncorrelated" per se (correlation doesn't create
+velocity; pair vol does): gold-in-GBP realized vol ≈ **37% annualized** (2026 H1) ≈ 6× cable, while
+gold–crypto correlation is only ~+0.5 — a genuinely *new* deviation-event stream, where a BTC pool
+(BTC–ETH corr ~+0.88) would mostly re-trade the WETH antenna's events. Fundamentals (verified
+2026-07-11): 6 decimals (the USDC venue's `1e6`-unit pattern reuses directly), **no fee-on-transfer,
+no pause** (blacklist + `destroyBlockedFunds`, issuer-upgradeable proxy — same accepted risk class
+as USDC); $2.5B mcap, supply ~tripled in 9 months to 707,747 oz; ~$30M mainnet DEX TVL /
+$5–10M/day volume incl. XAUt/USDC v4 ($3.6M — the arb-loop leg); routed by 1inch/CoW/Paraswap/Odos;
+Chainlink **XAU/USD live** at `0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6` (0.3% dev / 24h
+heartbeat, 8 dec). Hook = `src/usdc/` clone with two-feed fair `gbpUsd·nav/xauUsd` (wstGBP =
+currency0: `0x57C3…` < `0x6874…`), `XAUT_UNIT = 1e6`.
+
+Rejected for #4: **cbBTC/WBTC** (runner-up — ~10× gold's DEX depth, 30–50% vol, 1h feeds, but
++0.88 ETH-correlated = redundant event stream, zero novelty; keep as #5 candidate); **PAXG**
+(token-specific PAXG/USD feed 0.5%/24h is its one edge; loses on global `pause()`, historical
+fee-on-transfer machinery — removed today but reintroducible via proxy — and weaker aggregator
+presence); **EURC / GBP stables** (EUR/GBP vol 2.3% = no antenna signal; no GBP stable has >$100k
+on-chain liquidity — GBPT dead, GBPe mainnet supply 0, Agant GBPA not yet on-chain). Note: empty
+**tGBP/XAUt + tGBP/cbBTC v4 shells already exist on-chain** (seen in the arb-bot's discovery
+filter) — wrong pairing: tGBP misses the NAV-ratchet conveyor; pair wstGBP.
+
+Named risks the XAUT venue must carry into its sim/security pass:
+1. **Token–metal basis**: XAUt trades ~0.5% under Chainlink XAU/USD (the feed prices the metal, not
+   the token) — a persistent rest-state "deviation" the fee model must tolerate (analogous to the
+   USDC venue's ~53bps band-edge rest state); needs its own sweep (goldsim over XAU/GBP bars;
+   Dukascopy has XAU/USD, `sim/cablesim/` infra reuses).
+2. **Weekend/holiday stale-fair**: gold closes weekends like FX ⇒ fallback-regime windows (existing
+   staleness-fallback design covers this; expect more fallback minutes than the USDC venue).
+3. **Feed coarseness**: XAU/USD 0.3%/24h (coarser than ETH/USD 0.5%/1h) ⇒ chunkier deviation signal.
+4. **Issuer proxy risk**: upgradeable impl + `destroyBlockedFunds` (accepted, documented — same
+   posture as USDC/tGBP issuer trust).
+
+Priority order (adoption objective, capital available):
+
+- [ ] **P0 — footprint (zero capital, zero new audit surface):** execute the listings + CoW dapp
+      items already tracked above (ParaSwap PR #1204 follow-through, 1inch outreach, CoW forum post,
+      Hook Store dapp hosting/E2E/listing); USDC hook Etherscan verify; Dune dashboards public.
+- [ ] **P1 — deepen with available capital:** USDC pool first (14.4× efficiency, cheapest loop,
+      conveyor = protocol revenue), then WETH; finish the §U5 static-pool migration if still pending
+      (dual-funded pools leak toxic flow to the static 5bps pool). Staged tranches straight toward
+      sim scale (~250k wstGBP USDC-side) — no audit gate (operator stance above); the sim fee
+      conclusions assume that scale.
+- [ ] **P2 — build `src/xaut/`** (USDC-venue clone per above + goldsim param sweep + its own
+      readiness/security pass). **No hard gate** — the build is ~days on the proven `src/usdc/`
+      pattern; sequence it after the P0/P1 capital + listings work is in motion (those dominate
+      marginal velocity), goldsim first (the token–metal basis needs its own params). Fund at
+      launch per operator sizing.
+- [ ] **Deferred — external audit** (`src/weth/` + `src/usdc/`, plus `src/xaut/` when built, one
+      engagement): not a gate right now (operator stance 2026-07-11); revisit when POL is
+      materially larger or third-party LP shows up.
 
 ## Done
 
