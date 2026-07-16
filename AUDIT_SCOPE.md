@@ -77,7 +77,8 @@ model (the wstGBP wrapper's governance powers a swapper inherits): [`README.md`]
   (single GBP/USD feed, USDC assumed $1.00, 6-decimal quote token, no compounder) intended to be
   audited ALONGSIDE `src/weth/` in that future scope — the shared architecture means one review
   covers both with a small delta. Notes in `SECURITY_USDC_WSTGBP.md` (incl. the accepted USDC-depeg
-  risk).
+  risk). The XAUT/wstGBP venue (`src/xaut/`, built 2026-07-16, not yet deployed) joins `src/weth/`
+  + `src/usdc/` in that same deferred single-engagement audit scope.
 - **Vendored dependencies** under `lib/` (Uniswap v4 core/periphery, forge-std, Permit2) — treated as
   trusted upstream; the integration boundary with them is in scope.
 - **The wstGBP wrapper system and its governance** (`../maseer-one`, the `act`/`pip`/`cop`

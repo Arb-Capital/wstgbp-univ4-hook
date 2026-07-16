@@ -294,3 +294,127 @@ pool is funded:
 - Dune: reuse the weth queries by `{{hook_address}}` parameter EXCEPT `fallback_minutes` — reason
   codes renumber (5-entry enum); use `usdc_fallback_minutes.sql`. Submit the hook for decoding.
 - All other incident procedures (§7) apply verbatim with the usdc addresses.
+
+---
+
+# XAUT/wstGBP Dynamic-Fee Venue — Deployment Runbook (fourth venue)
+
+Same skeleton as the WETH runbook above; this section records only the deltas and the
+venue-specific decisions. Scripts: `script/DeployXautHook.s.sol` + `script/InitXautPool.s.sol`;
+targets: `make deploy-xaut-hook[-dry]`, `make init-xaut-pool[-dry]`, `make verify-xaut-hook`.
+Status: **BUILT, NOT YET DEPLOYED** — the goldsim sweep + readiness pass gate the deploy (§X0).
+
+## X0. Preconditions (deltas vs §0)
+
+- [ ] `sim/RESULTS_XAUT.md` exists (`make sim-data-cable` + `make sim-data-gold` +
+      `make sim-sweep-xaut` — the cable target supplies the shared GBP legs) and its
+      "Recommended starting FeeParams" == `DeployXautHook.simParams()` (synced 2026-07-16:
+      (50,10)bps bases, thr 1000, slope 1.0x, cap 100bps, minFee 50, fallback 5000, both windows
+      90000 — the threshold sits deliberately BELOW the ~5000 ppm token–metal basis, see
+      `SECURITY_XAUT_WSTGBP.md` §6). Gold leg was PAXG (documented fallback); if the Dukascopy
+      true-XAU confirmation re-sweep has landed since, re-check the winner still matches.
+- [ ] BOTH feed heartbeats/deviations re-verified against Chainlink docs **today**: XAU/USD
+      `0x214e…a0D6` (0.3% / 24h ⇒ window 90000s) and GBP/USD `0x5c0A…d4b5` (0.15% / 24h ⇒ window
+      90000s); retune the two staleness windows in `simParams()` if they changed.
+- [ ] The token–metal basis section read (hook NatSpec + `SECURITY_XAUT_WSTGBP.md`): XAUt trades
+      ~0.5% BELOW the XAU/USD metal feed, so the pool RESTS at d ≈ −5000 ppm. That is the venue's
+      designed rest state, not drift — it shapes the post-init drift note (§X3), the POL bracket
+      (§X4), and the deviation-histogram reading (§X6).
+- [ ] `make test` green incl. the `XautWstGbp*` suites; `make test-invariant` green (authenticated
+      archive RPC, per §0); the venue's own readiness/security pass done at the deploy rev.
+
+## X1. Fork rehearsal
+
+```bash
+make deploy-xaut-hook-dry     # keyless; asserts feed decimals (8/8), XAUT decimals == 6, the
+                              # two-feed fair corridor (500e18–20_000e18 wstGBP/XAUT — metal fair
+                              # sits in the low thousands-e18; FAIR_MIN alone also rejects an
+                              # orientation flip, the inverse ≈ 4e14), mining, exact flag bits
+                              # 0x20C0
+# full two-step rehearsal on a persistent anvil fork:
+anvil --fork-url $ETH_RPC_URL --gas-limit 3000000000 &   # match foundry.toml gas_limit
+# deploy + init against 127.0.0.1:8545 with a funded key, then kill anvil and
+# DELETE the rehearsal broadcast/ records (they are not deploy artifacts).
+```
+
+## X2. Hook deploy — mainnet
+
+```bash
+ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… make deploy-xaut-hook
+```
+
+Identical rationale to §2: record the hook address from the logs, do NOT verify inline, go
+straight to §X3. The hook is owned by the multisig from construction — no acceptance step.
+
+## X3. Pool init — mainnet (IMMEDIATELY after deploy)
+
+```bash
+XAUT_HOOK=<hook> make init-xaut-pool-dry
+XAUT_HOOK=<hook> ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… make init-xaut-pool
+```
+
+Same init-race posture and front-run recovery as §3 (permissionless init, predictable PoolKey —
+if front-run at a bad price, DO NOT fund; arb it to fair through the hook's own fee schedule or
+abandon the key). tickSpacing is **60** (high-vol pair — gold-in-GBP ~37% annualized — with wide
+POL brackets, so ~0.6% edge quantization is immaterial; the USDC venue's spacing-1 tight-bracket
+rationale does not apply). The script initializes at the **METAL fair** (the same two-feed
+OracleLib composition the hook prices with) and post-asserts |deviation| < 1000 ppm. Expect the
+pool to drift to d ≈ −basis (~−50 bps) after funding + the first arb — the designed rest state,
+NOT a mispriced init; do not "fix" it by initializing at fair×(1−basis), which would hardcode a
+basis estimate and break the deviation assert.
+
+## X3½. Verify + spot checks
+
+```bash
+ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… ETHERSCAN_API_KEY=… make verify-xaut-hook
+cast call $XAUT_HOOK "owner()(address)"   # 0x846a…4f7c
+cast call $XAUT_HOOK "paused()(bool)"     # false
+```
+
+Plus `feeParams()` read-back 10/10 == `simParams()` (the deploy script already asserts this
+on-chain; re-check by eye).
+
+## X4. Funding via the Uniswap UI (the Safe) — range METHOD (final numbers at launch)
+
+Mechanics identical to §4 (Permit2 + PositionManager via WalletConnect; the exact UI call shape,
+incl. the spacing-60 bracket, is pinned by `test/XautWstGbpPositionManager.t.sol`). Unlike §4/§U4
+the final numbers are deliberately NOT pre-committed here — gold moves too much between writing
+and launch; compute them at funding time from the live fair. The METHOD is decided:
+
+- Coordinate: wstGBP-per-XAUT (metal fair ≈ 2,300–3,100e18 at 2026 prices). The weekly NAV
+  ratchet (~9 bps/wk ≈ 5%/yr) LOWERS fair in this coordinate forever; gold-in-GBP vol (~37%
+  annualized) moves it both ways.
+- Method: **wide geometric bracket, ×/÷ ~1.5 around live fair, biased DOWN-side-wide** in
+  wstGBP-per-XAUT terms — the lower bound carries both the permanent ratchet drift and
+  gold-downside excursions, so it needs the extra headroom; a gold rally consumes the upper
+  bound. Yearly re-range review, same trigger logic as §4 (the ratchet alone eats ~5%/yr of the
+  low-side headroom).
+- The UI snaps to tickSpacing 60 (~0.6% price steps) — immaterial at this bracket width; take the
+  snapped ticks and record them.
+- **Small test add first**, probe swap, confirm the fee schedule (mint side = wstGBP in; at the
+  basis rest state the redeem side must read non-closing and pay base only), then real size per
+  operator sizing. Revisit `sim/RESULTS_XAUT.md`'s fee conclusions if funding materially differs
+  from its POL assumption.
+
+## X5. Predecessor migration — NONE (contrast §U5)
+
+There is no pre-existing XAUT/wstGBP pool: nothing is running an unprotected conveyor, so there
+is no LP to collect, remove, or re-mint — §U5 has no analogue here. The empty tGBP/XAUt v4 shells
+visible on-chain are the WRONG PAIRING (tGBP misses the NAV-ratchet conveyor; pair wstGBP —
+ROADMAP decision 2026-07-11) and are ignored, not migrated.
+
+## X6. Monitoring + incidents (deltas vs §6–§7)
+
+- `monitoring/check_feeds.sh` now also probes XAU/USD (window 90000s). Gold closes
+  weekends/holidays (+ the 22:00–23:00 UTC daily break): Chainlink usually heartbeats a frozen
+  price through the close (flat fair — NOT fallback), but if the feed pauses instead, staleness
+  fallback fires — EXPECTED; cross-check against market hours before reacting. More fallback
+  minutes than the USDC venue is normal for this venue.
+- Dune: the four `monitoring/dune/xaut_*.sql` queries are written but NOT yet created on Dune —
+  create them at deploy, set the deploy-date floors (marked TBD in the sources), record the IDs
+  in `monitoring/dune/README.md`, and submit the verified hook for decoding. Reason codes
+  RENUMBER again (8-entry enum, XAU/USD in the weth numbering's ETH/USD position — still ≠ the
+  usdc 5-entry mapping); use `xaut_fallback_minutes.sql`, never another venue's decoder.
+  Deviation-histogram mass at d ≈ −5000 ppm is the designed basis rest state, not an incident —
+  investigate regime shifts, not the rest mass.
+- All other incident procedures (§7) apply verbatim with the xaut addresses.

@@ -327,11 +327,26 @@ Priority order (adoption objective, capital available):
       (dual-funded pools leak toxic flow to the static 5bps pool). Staged tranches straight toward
       sim scale (~250k wstGBP USDC-side) — no audit gate (operator stance above); the sim fee
       conclusions assume that scale.
-- [ ] **P2 — build `src/xaut/`** (USDC-venue clone per above + goldsim param sweep + its own
+- [~] **P2 — build `src/xaut/`** (USDC-venue clone per above + goldsim param sweep + its own
       readiness/security pass). **No hard gate** — the build is ~days on the proven `src/usdc/`
       pattern; sequence it after the P0/P1 capital + listings work is in motion (those dominate
       marginal velocity), goldsim first (the token–metal basis needs its own params). Fund at
-      launch per operator sizing.
+      launch per operator sizing. **Progress 2026-07-16:** contracts + tests + scripts + sim
+      package BUILT and green (456 tests repo-wide): `src/xaut/` (two-feed fair, 8-entry
+      `FallbackReason`, `XAUT_UNIT=1e6`, 10-field `FeeParams`), 111 xaut test/invariant fns
+      across 9 suites (gas warm 9,642 / cold 66,105 vs <10k/<80k), `DeployXautHook.s.sol` +
+      `InitXautPool.s.sol` (corridor 500e18–20_000e18, spacing 60) + Makefile targets,
+      `sim/goldsim/` + `make sim-data-gold`/`sim-sweep-xaut`, DEPLOY.md §X0–§X6 + README venue
+      section + Dune `xaut_*.sql` + check_feeds XAU/USD probe. Sweep DONE 2026-07-16
+      (`sim/RESULTS_XAUT.md`, PAXG gold leg — Binance µs-timestamp trap fixed in
+      `fetch_binance_gold.sh`; Dukascopy true-XAU confirmation re-sweep optional, cache still
+      filling): winner bases (50,10) bps / thr 1000 / slope 1.0× / cap 100 bps stamped into
+      `simParams()` — threshold deliberately BELOW the ~5000 ppm basis (SECURITY §6 rationale).
+      Readiness pass DONE same day (`docs/READINESS_XAUT_WSTGBP_2026-07-16.md`): **GO** with
+      four conditions (commit-before-broadcast, invariants at the deploy rev if code moves,
+      risk acceptance, PAXG-sweep caveat + optional Dukascopy confirmation re-sweep) — fresh
+      456/456 + 47/47 sim + 37/37 invariants + anvil two-step at 0 ppm with the re-run guard.
+      REMAINING (operator): commit, then deploy + init + verify + fund per DEPLOY.md §X.
 - [ ] **Deferred — external audit** (`src/weth/` + `src/usdc/`, plus `src/xaut/` when built, one
       engagement): not a gate right now (operator stance 2026-07-11); revisit when POL is
       materially larger or third-party LP shows up.

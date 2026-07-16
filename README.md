@@ -272,6 +272,77 @@ POL bracket (FINAL 2026-07-05): 1.20–1.60 USDC/wstGBP, ticks −274,501/−271
 
 ---
 
+## XAUT/wstGBP dynamic-fee venue (`src/xaut/`) — BUILT, NOT YET DEPLOYED
+
+Fourth venue: **`XautWstGbpHook`**, a fee-only, oracle-aware dynamic-fee hook for a XAUT/wstGBP
+(Tether Gold) pool — the **first on-chain gold/sterling market**, cloned from the USDC venue.
+Motivation ([`ROADMAP.md`](ROADMAP.md) decision 2026-07-11): gold-in-GBP realized vol ≈ **37%
+annualized** (2026 H1) ≈ 6× cable, while gold–crypto correlation is only ~+0.5 — a genuinely NEW
+deviation-event stream for the antenna network (a BTC pair at ~+0.88 ETH correlation would mostly
+re-trade the WETH venue's events). The goldsim parameter sweep is DONE
+(`sim/RESULTS_XAUT.md`, 2026-07-16, PAXG gold leg) and its winner — bases (50,10) bps,
+threshold 1000 ppm, slope 1.0×, cap 100 bps — is stamped into `DeployXautHook.simParams()`;
+the readiness pass is DONE same day (`docs/READINESS_XAUT_WSTGBP_2026-07-16.md` — **GO** with
+conditions, notably commit-before-broadcast and the PAXG data caveat). Launch path: `DEPLOY.md`
+XAUT section (§X0–§X6), operator-executed.
+
+Deltas vs the USDC venue (everything else — fee-only `OVERRIDE_FEE_FLAG`, never-revert oracle
+reads, per-tx transient fair cache, `Ownable2Step` multisig `0x846a…4f7c`, flags `0x20C0` — is
+identical):
+
+- **Two-feed fair** (back to the WETH shape): `fair (wstGBP per XAUT, WAD) =
+  (XAU/USD ÷ GBP/USD) ÷ navprice()`. `FallbackReason` is an **8-entry enum** — structurally the
+  WETH numbering with XAU/USD in the ETH/USD position (1–3 XAU feed, 4–6 GBP feed, 7 NAV bad,
+  255 paused); it still RENUMBERS vs the USDC venue's 5-entry enum (cross-venue table in
+  `monitoring/dune/README.md`).
+- **10-field `FeeParams`** — the WETH shape with `xauUsdStalenessSec` in the ETH window's
+  position (both windows 90000s: two 24h-heartbeat feeds).
+- **`XAUT_UNIT = 1e6`** — XAUT is 6 decimals like USDC, so the same single-constant decimal fold
+  (constructor asserts `XAUT.decimals() == 6`).
+- **tickSpacing 60** (the WETH venue's): high-vol pair with wide POL brackets, so ~0.6% edge
+  quantization is immaterial (the USDC venue's spacing-1 tight-bracket rationale does not apply).
+- **Fair-price corridor 500e18–20,000e18** in the deploy/init scripts: metal fair sits in the low
+  thousands-e18 (~2,300–3,100 at 2026 prices), there is no near-1:1 ambiguity, and FAIR_MIN alone
+  rejects an orientation flip (the inverse ≈ 4e14).
+- **Token–metal basis rest state (the venue's signature)**: the XAU/USD feed prices spot gold and
+  XAUt persistently trades ~0.5% BELOW it, so the pool RESTS at **d ≈ −5000 ppm** — by design,
+  not drift. Sign convention: d > 0 ⇒ XAUT rich ⇒ the redeem side (XAUT-in) closes — the
+  post-ratchet conveyor; d < 0 ⇒ the mint side closes (the gold-rally direction). At rest the
+  redeem conveyor reads non-closing and is never surcharged (no threshold setting can change
+  that); the misclassification is mint-side, and the goldsim sweep resolved the threshold-vs-basis
+  axis the OTHER way from the naive fix: the winner's threshold (1000 ppm) sits deliberately BELOW
+  the basis, turning the resting mint side into surcharge revenue — robust across basis
+  {0,25,50,100} bps, at the documented cost of a wider mint-side no-arb band
+  (`SECURITY_XAUT_WSTGBP.md` §6). Gold also closes
+  weekends/holidays: a frozen-but-heartbeating feed = flat fair (fine); a paused feed = staleness
+  fallback (fine) — expect more fallback minutes than the USDC venue.
+- **No POLCompounder** (POL via the Uniswap UI, as USDC).
+
+Suites mirror the USDC venue's — 111 test/invariant functions: hook fork (48), OracleLib (21),
+FeeMath (12), stock-Quoter parity (9), adversarial (6), flipped-ordering (4),
+PositionManager/UI-path (2), stateful invariants (8), gas (1) — warm overhead **9,642** / cold
+**66,105** vs the <10k / <80k ceilings (two Chainlink chains, so the WETH venue's cold budget,
+not USDC's 70k).
+
+### Key mainnet addresses (XAUT/wstGBP venue) — hook NOT yet deployed
+
+| Role | Address |
+|---|---|
+| **`XautWstGbpHook`** | **TBD at deploy** (flags `0x20C0`; owner = multisig from construction) |
+| **Pool** (v4 singleton — id, not address) | **TBD at init** (init at the metal fair; post-funding drift to d ≈ −50 bps is the designed rest state) |
+| wstGBP (currency0, the wrapper) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` |
+| XAUT — Tether Gold (currency1, 6 decimals) | `0x68749665FF8D2d112Fa859AA293F07A622782F38` |
+| Chainlink XAU/USD | `0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6` (8 dec; 0.3% / 24h heartbeat → window 90000s; prices the METAL, not the token) |
+| Chainlink GBP/USD | `0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5` (8 dec; 0.15% / 24h heartbeat → window 90000s) |
+| v4 PoolManager / stock Quoter | `0x000000000004444c5dc75cB358380D2e3dE08A90` / `0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203` |
+| Owner multisig | `0x846a655a4fA13d86B94966DFDf4D9a070e554f7c` |
+
+Canonical PoolKey: (wstGBP, XAUT, fee `0x800000` DYNAMIC_FEE_FLAG, tickSpacing 60, hooks = TBD at
+deploy). POL bracket: METHOD decided (wide geometric ×/÷ ~1.5, biased down-side-wide for the NAV
+ratchet), final numbers at launch from the live fair — DEPLOY.md §X4.
+
+---
+
 ## Build / test
 
 ```bash

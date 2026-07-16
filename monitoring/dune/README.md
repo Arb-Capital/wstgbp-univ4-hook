@@ -40,16 +40,44 @@ never point the weth reason decoder at the usdc hook or vice versa.
 
 **Cross-venue `OracleFallback` reason codes — do NOT copy-paste decoders across venues:**
 
-| code | weth venue (8-entry enum) | usdc venue (5-entry enum) |
+| code | weth venue (8-entry enum) | usdc venue (5-entry enum) | xaut venue (8-entry enum) |
+|---|---|---|---|
+| 1 | ETH feed call | GBP feed call | XAU feed call |
+| 2 | ETH feed answer | GBP feed answer | XAU feed answer |
+| 3 | ETH feed stale | GBP feed stale | XAU feed stale |
+| 4 | GBP feed call | NAV bad (pip paused) | GBP feed call |
+| 5 | GBP feed answer | — | GBP feed answer |
+| 6 | GBP feed stale | — | GBP feed stale |
+| 7 | NAV bad (pip paused) | — | NAV bad (pip paused) |
+| 255 | owner paused | owner paused (also the USDC-depeg runbook) | owner paused |
+
+(The xaut column is structurally the weth numbering with XAU/USD in the ETH/USD position — two
+feeds again — but it is still a DIFFERENT venue enum and still ≠ the usdc 5-entry mapping.)
+
+## XAUT/wstGBP venue — prepared 2026-07-16 (NOT yet deployed; hook + poolId TBD)
+
+Same posture as the other two dynamic-fee sets: public, saved (non-temp), parameterized on
+`{{hook_address}}` (default = the deployed XautWstGbpHook), none scheduled. The four `xaut_*.sql`
+sources below are written ahead of the deploy; **nothing exists on Dune yet** — at deploy, create
+them from these files, set the deploy-date floors (marked TBD in the sources), record the Dune IDs
+here, and submit the verified hook for decoding (DEPLOY.md §X6).
+
+| Query | Dune ID | Source |
 |---|---|---|
-| 1 | ETH feed call | GBP feed call |
-| 2 | ETH feed answer | GBP feed answer |
-| 3 | ETH feed stale | GBP feed stale |
-| 4 | GBP feed call | NAV bad (pip paused) |
-| 5 | GBP feed answer | — |
-| 6 | GBP feed stale | — |
-| 7 | NAV bad (pip paused) | — |
-| 255 | owner paused | owner paused (also the USDC-depeg runbook) |
+| Daily fees by direction (redeem = XAUT in; deploy-date floor TBD) | TBD at deploy | `xaut_swapfee_by_direction.sql` |
+| Deviation histogram (30d; sign-split + direction-aware `surcharge_paying` — mass at d ≈ −5000 ppm is the token–metal basis rest state, BY DESIGN; at rest XAUT-in pays base only, wstGBP-in pays base + surcharge under the sub-basis threshold) | TBD at deploy | `xaut_deviation_histogram.sql` |
+| Sustained fallback alert (alert-on-results shape; gold-market-hours caveat) | TBD at deploy | `xaut_alert_sustained_fallback.sql` |
+| Fallback minutes + reasons by day (**xaut 8-entry reason mapping**) | TBD at deploy | `xaut_fallback_minutes.sql` |
+
+The xaut hook emits the SAME event signatures (`SwapFee`, `OracleFallback` — identical topic0s) as
+the weth and usdc hooks. Venue-specific: mint side = wstGBP-in (currency0 in), redeem = XAUT-in;
+the histogram is sign-split because the venue's signature is the **token–metal basis** — XAUt
+trades ~0.5% below the XAU/USD metal feed, so the pool RESTS at d ≈ −5000 ppm (design, not drift;
+at rest the redeem conveyor reads non-closing and is never surcharged — watch for regime shifts,
+not the rest mass); and expect MORE fallback minutes than the usdc venue — gold closes
+weekends/holidays, and a paused feed over the close means expected staleness fallback (a
+frozen-but-heartbeating feed just means flat fair). Reason codes RENUMBER again (table above);
+never point another venue's reason decoder at the xaut hook.
 
 ## Backstop venue queries (added 2026-07-05, hook `0xfE36…4888`, poolId `0xdb21…5ce5`)
 

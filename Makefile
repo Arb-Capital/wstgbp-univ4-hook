@@ -36,12 +36,13 @@ INVARIANT_MATCH := Invariants
 
 # Excluded from coverage runs (not just from the report): the gas suite asserts optimizer-built
 # gas numbers, which the coverage build (optimizer off) legitimately misses.
-COVERAGE_SKIP := (Invariants|WethWstGbpGasTest|UsdcWstGbpGasTest)
+COVERAGE_SKIP := (Invariants|WethWstGbpGasTest|UsdcWstGbpGasTest|XautWstGbpGasTest)
 
 .PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry deploy-hook-helper deploy-hook-helper-dry snapshot snapshot-check \
-	sim-test sim-sweep sim-data sim-sweep-usdc sim-data-cable \
+	sim-test sim-sweep sim-data sim-sweep-usdc sim-data-cable sim-sweep-xaut sim-data-gold sim-data-gold-xau \
 	deploy-weth-hook deploy-weth-hook-dry verify-weth-hook init-weth-pool init-weth-pool-dry \
-	deploy-usdc-hook deploy-usdc-hook-dry verify-usdc-hook init-usdc-pool init-usdc-pool-dry
+	deploy-usdc-hook deploy-usdc-hook-dry verify-usdc-hook init-usdc-pool init-usdc-pool-dry \
+	deploy-xaut-hook deploy-xaut-hook-dry verify-xaut-hook init-xaut-pool init-xaut-pool-dry
 
 build :; forge build
 
@@ -152,6 +153,24 @@ sim-sweep-usdc :; python3 sim/run_sweep_usdc.py
 # Binance can't supply cable, it delisted GBP pairs in 2023).
 sim-data-cable :; sim/data/fetch_dukascopy.sh
 
+# --- XAUT/wstGBP (gold) venue sim (sim/goldsim/; shares sim-test above) ---
+
+# Full gold-venue parameter sweep -> sim/RESULTS_XAUT.md (house-take objective + the
+# token-metal basis sensitivity table). Needs the gold + GBP/USD regime CSVs
+# (make sim-data-gold, plus make sim-data-cable for the shared GBP legs).
+sim-sweep-xaut :; python3 sim/run_sweep_xaut.py
+
+# Download the gold-leg 1m regime bars the sweep config actually points at: Binance PAXG/USDT
+# monthly klines (the ACTIVE source — no key, no throttle; sim/data/README.md documents the
+# PAXG-tracks-spot caveat and the 2025-01 microsecond-timestamp normalization).
+sim-data-gold :; sim/data/fetch_binance_gold.sh
+
+# Confirmation source: true XAU/USD spot bars (+ the one extra GBP/USD window) from Dukascopy
+# (idempotent + resumable day-file cache — Dukascopy tarpits bulk fetchers, a full first fetch
+# can take days; XAUUSD decodes at the 1e-3 metals point scale). Re-point sweep_xaut.json at
+# the xauusd_* CSVs and rerun the sweep as confirmation when the cache completes.
+sim-data-gold-xau :; sim/data/fetch_dukascopy_gold.sh
+
 # --- WETH/wstGBP dynamic-fee venue deploy (Phase 6; see DEPLOY.md for the full runbook) ---
 
 # Simulate the hook deploy on a mainnet fork — no broadcast, no key. Mines the salt, checks the
@@ -240,6 +259,46 @@ init-usdc-pool :
 	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
 	@test -n "$(USDC_HOOK)" || { echo "USDC_HOOK (deployed hook address) is required"; exit 1; }
 	forge script script/InitUsdcPool.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --slow
+
+# --- XAUT/wstGBP dynamic-fee venue deploy (see DEPLOY.md, XAUT venue section) ---
+# Same shape as the weth/usdc blocks: dry-run keyless; deploy does NOT verify inline (init must
+# follow immediately — init front-run window); verify resumes the broadcast afterwards.
+
+deploy-xaut-hook-dry :; @$(KEYLESS) forge script script/DeployXautHook.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+deploy-xaut-hook :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	forge script script/DeployXautHook.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --slow
+
+verify-xaut-hook :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (the deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	@test -n "$(ETHERSCAN_API_KEY)" || { echo "ETHERSCAN_API_KEY is required"; exit 1; }
+	@forge script script/DeployXautHook.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		--broadcast --resume --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
+
+init-xaut-pool-dry :
+	@test -n "$(XAUT_HOOK)" || { echo "XAUT_HOOK (deployed hook address) is required"; exit 1; }
+	@$(KEYLESS) forge script script/InitXautPool.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
+
+init-xaut-pool :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	@test -n "$(XAUT_HOOK)" || { echo "XAUT_HOOK (deployed hook address) is required"; exit 1; }
+	forge script script/InitXautPool.s.sol --rpc-url $(ETH_RPC_URL) \
 		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
 		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
 		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \

@@ -16,6 +16,7 @@ lcov.info
 # Dotenv file
 .env
 sim/data/*.csv
+sim/data/.dukascopy-cache/
 
 # Python (sim harness)
 __pycache__/

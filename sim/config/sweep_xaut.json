@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "XAUT (gold) venue sweep configuration - single source of truth for regimes & environment.",
+    "CSV paths relative to the repo root (run via `make sim-sweep-xaut`).",
+    "GOLD LEG SOURCE - PAXG/USDT (Binance, sim/data/fetch_binance_gold.sh), the documented",
+    "fallback: Dukascopy XAU/USD (fetch_dukascopy_gold.sh) tarpits bulk fetchers per-IP (~day-long",
+    "first fetch); PAXG is tokenized gold tracking spot within ~20-50bps (its on-chain redemption",
+    "arb held through 2022-2025, unlike Binance's GBPUSDT which depegged ~5% after GBP banking",
+    "rails closed mid-2023 - checked and REJECTED for the cable leg). Re-run on true XAU/USD when",
+    "the Dukascopy cache completes, as confirmation (windows in fetch_dukascopy_gold.sh).",
+    "PAXG trades 24/7, matching the Chainlink XAU/USD feed's observed weekend behavior (heartbeats",
+    "with small drift through the close - verified on-chain 2026-07-16).",
+    "shock-2022: gilt crisis x gold drawdown to ~$1,615 - both fair legs stressed at once;",
+    "surcharge cap + range breach + both oracle deadbands under violence. gas 10 gwei / ETH $1300.",
+    "calm-2024: calm cable (~1.25-1.29) x gold +17% then consolidation; the mid-intensity cell and",
+    "the sensitivity-table anchor. CONTAINS the real 2024-04-13 weekend squeeze (PAXG +25% in ~90",
+    "min while metal markets were closed - kept deliberately: it IS this venue's weekend-",
+    "dislocation risk). gas 1 gwei / ETH $3000.",
+    "rally-2025: gold up ~30% - fair RISES so the pool goes wstGBP-rich: exercises the mint-side",
+    "loop against the basis rest state, the venue's hardest cell. gas 1 gwei / ETH $2500.",
+    "nav: discrete weekly ratchet (the conveyor driver): 9 bps/week ~ 4.8% APY, phase 3d.",
+    "basis_bps: XAUt trades ~0.5% under the metal feed (ROADMAP.md 2026-07-11) - the ranking",
+    "cells run at this value; the sweep tables the winner's sensitivity to {0,25,50,100}."
+  ],
+  "nav": { "step_bps": 9.0, "period_days": 7.0, "phase_days": 3.0 },
+  "basis_bps": 50.0,
+  "regimes": [
+    { "name": "shock-2022", "xau_csv": "sim/data/paxgusd_shock_2022.csv", "gbp_csv": "sim/data/gbpusd_gilt_2022.csv", "gas_gwei": 10.0, "eth_usd": 1300.0, "max_gap_min": 4320 },
+    { "name": "calm-2024", "xau_csv": "sim/data/paxgusd_calm_2024.csv", "gbp_csv": "sim/data/gbpusd_calm_2024.csv", "gas_gwei": 1.0, "eth_usd": 3000.0, "max_gap_min": 4320 },
+    { "name": "rally-2025", "xau_csv": "sim/data/paxgusd_rally_2025.csv", "gbp_csv": "sim/data/gbpusd_trend_2025.csv", "gas_gwei": 1.0, "eth_usd": 2500.0, "max_gap_min": 4320 }
+  ]
+}
