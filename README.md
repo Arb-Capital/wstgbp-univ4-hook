@@ -304,18 +304,21 @@ identical):
 - **Fair-price corridor 500e18–20,000e18** in the deploy/init scripts: metal fair sits in the low
   thousands-e18 (~2,300–3,100 at 2026 prices), there is no near-1:1 ambiguity, and FAIR_MIN alone
   rejects an orientation flip (the inverse ≈ 4e14).
-- **Token–metal basis rest state (the venue's signature)**: the XAU/USD feed prices spot gold and
-  XAUt persistently trades ~0.5% BELOW it, so the pool RESTS at **d ≈ −5000 ppm** — by design,
-  not drift. Sign convention: d > 0 ⇒ XAUT rich ⇒ the redeem side (XAUT-in) closes — the
-  post-ratchet conveyor; d < 0 ⇒ the mint side closes (the gold-rally direction). At rest the
-  redeem conveyor reads non-closing and is never surcharged (no threshold setting can change
-  that); the misclassification is mint-side, and the goldsim sweep resolved the threshold-vs-basis
-  axis the OTHER way from the naive fix: the winner's threshold (1000 ppm) sits deliberately BELOW
-  the basis, turning the resting mint side into surcharge revenue — robust across basis
-  {0,25,50,100} bps, at the documented cost of a wider mint-side no-arb band
-  (`SECURITY_XAUT_WSTGBP.md` §6). Gold also closes
-  weekends/holidays: a frozen-but-heartbeating feed = flat fair (fine); a paused feed = staleness
-  fallback (fine) — expect more fallback minutes than the USDC venue.
+- **Token–metal basis rest state (the venue's signature)**: the XAU/USD feed prices spot gold
+  while the pool trades the token, so the pool RESTS at **d ≈ −basis** — by design, not drift.
+  The basis is small and **sign-unstable** (~+50bp discount estimated 2026-07-11; ~11bp premium —
+  XAUt ABOVE the feed — measured 2026-07-16). Sign convention: d > 0 ⇒ XAUT rich ⇒ the redeem
+  side (XAUT-in) closes — the post-ratchet conveyor; d < 0 ⇒ the mint side closes (the gold-rally
+  direction). Discount regime (rest d < 0): the redeem conveyor reads non-closing and is never
+  surcharged; the misclassification is mint-side, and the goldsim sweep resolved the
+  threshold-vs-basis axis the OTHER way from the naive fix: the winner's threshold (1000 ppm)
+  sits deliberately BELOW the basis magnitude, turning the resting mint side into surcharge
+  revenue at the documented cost of a wider mint-side no-arb band. Premium regime (rest d > 0,
+  the live 2026-07-16 regime): the surcharged side flips to the conveyor, ramp-bounded, with flat
+  anchor-cell economics. Robust across basis {−50,−25,0,25,50,100} bps; full-grid ranking
+  confirmation at basis 0 in `sim/RESULTS_XAUT_BASIS0.md` (`SECURITY_XAUT_WSTGBP.md` §6). Gold
+  also closes weekends/holidays: a frozen-but-heartbeating feed = flat fair (fine); a paused feed
+  = staleness fallback (fine) — expect more fallback minutes than the USDC venue.
 - **No POLCompounder** (POL via the Uniswap UI, as USDC).
 
 Suites mirror the USDC venue's — 111 test/invariant functions: hook fork (48), OracleLib (21),

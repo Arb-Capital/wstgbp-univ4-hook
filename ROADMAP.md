@@ -307,10 +307,14 @@ on-chain liquidity — GBPT dead, GBPe mainnet supply 0, Agant GBPA not yet on-c
 filter) — wrong pairing: tGBP misses the NAV-ratchet conveyor; pair wstGBP.
 
 Named risks the XAUT venue must carry into its sim/security pass:
-1. **Token–metal basis**: XAUt trades ~0.5% under Chainlink XAU/USD (the feed prices the metal, not
-   the token) — a persistent rest-state "deviation" the fee model must tolerate (analogous to the
-   USDC venue's ~53bps band-edge rest state); needs its own sweep (goldsim over XAU/GBP bars;
-   Dukascopy has XAU/USD, `sim/cablesim/` infra reuses).
+1. **Token–metal basis**: the feed prices the metal, not the token — a persistent rest-state
+   "deviation" the fee model must tolerate (analogous to the USDC venue's ~53bps band-edge rest
+   state); needs its own sweep (goldsim over XAU/GBP bars; Dukascopy has XAU/USD, `sim/cablesim/`
+   infra reuses). Estimated ~0.5% UNDER the feed at this decision (2026-07-11); **measured
+   2026-07-16 at a ~11bp PREMIUM (XAUT $3,985 vs feed $3,980.58; +28bp over PAXG) — sign-flipped**.
+   Treated as sign-unstable since: sensitivity swept across basis {−50..+100} bps plus a full-grid
+   ranking confirmation at basis 0 (`sim/RESULTS_XAUT_BASIS0.md`), and the surcharged-side flip is
+   pinned by `test_premium_regime_flips_the_surcharged_side` (SECURITY §6).
 2. **Weekend/holiday stale-fair**: gold closes weekends like FX ⇒ fallback-regime windows (existing
    staleness-fallback design covers this; expect more fallback minutes than the USDC venue).
 3. **Feed coarseness**: XAU/USD 0.3%/24h (coarser than ETH/USD 0.5%/1h) ⇒ chunkier deviation signal.
@@ -346,6 +350,20 @@ Priority order (adoption objective, capital available):
       four conditions (commit-before-broadcast, invariants at the deploy rev if code moves,
       risk acceptance, PAXG-sweep caveat + optional Dukascopy confirmation re-sweep) — fresh
       456/456 + 47/47 sim + 37/37 invariants + anvil two-step at 0 ppm with the re-run guard.
+      **Review-response pass 2026-07-16 (same day, post-readiness):** external review found the
+      basis assumption sign-flipped in live data (measured ~11bp XAUt PREMIUM vs the ~50bp
+      discount estimate) — basis axis extended to {−50..+100} bps (winner unchanged, premium
+      rows flat) + basis-0 full-grid ranking (`RESULTS_XAUT_BASIS0.md`); the sweep's
+      winner-selection had an exact-tie/grid-order defect, fixed (competition ranks + declared
+      total-house-take tie-break, unit-tested): the basis-0 run alone picks the thr=3000
+      sibling (+$12–122 in organic-0 cells, −$1.3–3.3k per organic-1 cell, rank 39 in the
+      discount regime), while the union of BOTH regime runs selects the shipped params
+      UNIQUELY (worst rank 7 vs 9 next-best) — NOT re-stamped, owner retune path documented;
+      InitXautPool
+      now derives feeds/windows from the deployed hook; deploy/init/pre-funding XAUt blocklist
+      checks + impl-slot logging added; readiness condition 3 amended to the operator stance
+      (audits not a scale-up gate); basis prose corrected repo-wide; anvil two-step re-rehearsed
+      green (readiness addendum has the full record).
       REMAINING (operator): commit, then deploy + init + verify + fund per DEPLOY.md §X.
 - [ ] **Deferred — external audit** (`src/weth/` + `src/usdc/`, plus `src/xaut/` when built, one
       engagement): not a gate right now (operator stance 2026-07-11); revisit when POL is

@@ -51,13 +51,17 @@ import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/type
 ///      the token addresses, never assumed), so `FeeMath` never sees a raw `zeroForOne`.
 ///
 ///      TOKEN–METAL BASIS (accepted risk, venue decision 2026-07-11): XAU/USD prices spot gold, not
-///      the XAUt token, and XAUt persistently trades ~0.5% BELOW the metal — so the pool RESTS at
-///      d ≈ −basis rather than 0. At rest the redeem side reads non-closing (surcharge-immune under
-///      ANY threshold); the mint side reads closing, and the goldsim sweep (sim/RESULTS_XAUT.md,
-///      2026-07-16) deliberately shipped a threshold BELOW the basis — resting mint-side flow pays
-///      base + ramp surcharge by design (priced, basis-robust), not by accident. The
-///      basis-sensitivity table there bounds the cost of a basis-regime shift, and the owner can
-///      retune `FeeParams` if it moves; see SECURITY_XAUT_WSTGBP.md "token–metal basis".
+///      the XAUt token — so the pool RESTS at d ≈ −basis rather than 0, where basis is the
+///      token–metal gap. The basis is small and SIGN-UNSTABLE: a ~+50bp discount was estimated
+///      2026-07-11; a ~11bp PREMIUM (XAUt above the feed) was measured 2026-07-16. Discount regime
+///      (rest d < 0): the redeem side reads non-closing (surcharge-immune under ANY threshold), the
+///      mint side reads closing — the goldsim sweep (sim/RESULTS_XAUT.md, 2026-07-16) deliberately
+///      shipped a threshold BELOW the basis magnitude, so resting mint-side flow pays base + ramp
+///      surcharge by design (priced), not by accident. Premium regime (rest d > 0): the surcharged
+///      side flips to the redeem conveyor — ramp-bounded, and anchor-cell economics stay flat.
+///      The basis-sensitivity table there bounds the cost of BOTH regimes (basis {−50..+100} bps;
+///      full-grid ranking confirmation at basis 0 in RESULTS_XAUT_BASIS0.md), and the owner can
+///      retune `FeeParams` if the regime moves; see SECURITY_XAUT_WSTGBP.md "token–metal basis".
 ///
 ///      Gold also closes weekends/holidays: the XAU/USD feed heartbeats through the close on a
 ///      near-frozen price, so a weekend is ordinary priced deviation against a flat fair — NOT a

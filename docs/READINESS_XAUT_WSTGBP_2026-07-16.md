@@ -21,9 +21,12 @@ single-engagement scope.
    6 suites — was on the build tree; the subsequent changes are the `simParams()` stamp,
    scripts/docs/monitoring text, and sim-side files only, no hook or invariant code, so the run
    remains representative — but the gate belongs to the deploy rev, per DEPLOY.md §X0).
-3. **Risk acceptance recorded at launch:** first-party review only until the venue's external
-   audit (bundled with the weth/usdc deferred scope); launch POL small/capped; scale-up gated on
-   that audit.
+3. **Risk acceptance recorded at launch:** first-party review only — the venue joins the
+   deferred weth+usdc+xaut external-audit scope; launch POL small/capped. *(Amended 2026-07-16,
+   review-response pass: scale-up proceeds at operator risk tolerance per the ROADMAP operator
+   stance of 2026-07-11, which SUPERSEDES audit-gating — the original wording here ("scale-up
+   gated on that audit") contradicted it and does not govern. The audit remains a standing
+   recommendation and the bundled scope remains queued; revisit at materially larger POL.)*
 4. **Gold-leg data caveat recorded:** the sweep's gold leg is **PAXG/USDT** (Binance), the
    documented fallback source — tokenized gold tracking spot within ~20–50bps, its own basis
    wobble, 24/7 trading (which matches the Chainlink XAU/USD feed's verified weekend behavior
@@ -39,7 +42,7 @@ single-engagement scope.
 | `make test` (full fast suite, mainnet fork) | **456/456 passed** (34 suites, all four venues; re-run AFTER the `simParams()` stamp) |
 | Production-params smoke at the stamped winner | `test_productionSimParamsBaseFees` + suite: 48/48 in `XautWstGbpHookTest` — shipped literals `checkParams`-valid on-chain, both bases charge at ~zero deviation, production staleness windows accept fresh feeds |
 | `make coverage` (`src/xaut/`) | **100% all metrics** — `XautWstGbpHook` 61/61 L, 71/71 S, 11/11 B, 7/7 F; `FeeMath` 21/21, 49/49, 6/6, 3/3; `OracleLib` 28/28, 50/50, 11/11, 4/4 |
-| `make sim-test` | **47/47 passed** (33 wethsim/cablesim regression-green + 14 gold: bars/costs/agents + goldsim acceptance incl. rest-at-−basis and conveyor-alive-on-static-5) |
+| `make sim-test` | **47/47 passed** (33 wethsim/cablesim regression-green + 14 gold: bars/costs/agents + goldsim acceptance incl. rest-at-−basis and conveyor-alive-on-static-5); 55/55 after the review-response fixes (addendum) |
 | Gas suite | warm overhead **9,642** (<10k target MET), cold **66,105** (<80k WETH-shaped ceiling — TWO Chainlink proxy chains vs USDC's one); regime-pinned methodology (live gold ~$4k vs fixture $2,625 would otherwise measure the cap-saturated surcharge path); `snapshots/XautWstGbpGasTest.json` regenerated this pass |
 | `make test-invariant` (authenticated RPC) | **37/37 across all 6 suites** (backstop 4, adapter 3, weth 8, POL compounder 6, usdc 8, **xaut 8**), 596s, zero failures/RPC aborts |
 | `make deploy-xaut-hook-dry` (live mainnet state) | pass WITH the stamped winner params — pre-flight decimals (XAU/USD 8, GBP/USD 8, XAUT 6), composed live fair inside [500e18, 20_000e18], flags 0x20C0 mined, all post-deploy asserts (~2.43M gas est.) |
@@ -59,16 +62,19 @@ conveyor-dead override; basis 50bps on the ranking cells):
 - **Winner = (50,10)bps bases, threshold 1000 ppm, slope 1.0×, cap 100bps, minFee 50** — best
   worst-case rank across all six cells (**max rank 7**; next-best 9). The (50,10) wide-edge base
   pair — added to the grid because gold-in-GBP vol ≈ 6× cable — earns its keep everywhere.
-- **The threshold sits deliberately BELOW the ~5000 ppm token–metal basis** — the opposite of the
-  pre-sweep intuition (the placeholder had pre-widened it to 5000). Why it wins: the redeem
-  conveyor reads deviation-*opening* at the rest state and is surcharge-immune under ANY
-  threshold (SECURITY §6, asserted on-chain), so a sub-basis threshold converts resting
-  mint-side flow into surcharge revenue without starving the conveyor. Priced trade-off: a wider
-  mint-side no-arb band (anchor-cell band p50 ~3,900 / p95 ~12,400 ppm) — documented in
-  SECURITY §6 consequence 3.
+- **The threshold sits deliberately BELOW the ~5000 ppm token–metal basis estimate** — the
+  opposite of the pre-sweep intuition (the placeholder had pre-widened it to 5000). Why it wins:
+  in the discount regime the redeem conveyor reads deviation-*opening* at the rest state and is
+  surcharge-immune under ANY threshold (SECURITY §6, asserted on-chain), so a sub-basis threshold
+  converts resting mint-side flow into surcharge revenue without starving the conveyor. Priced
+  trade-off: a wider mint-side no-arb band (anchor-cell band p50 ~3,900 / p95 ~12,400 ppm) —
+  documented in SECURITY §6 consequence 3.
 - **Basis fragility: none found** — winner house take stays in a narrow band across basis
   {0, 25, 50, 100} bps and conveyor volume *rises* with the basis (RESULTS basis table). The
   basis being an estimate is therefore not a load-bearing assumption of the param choice.
+  *(Extended 2026-07-16, review-response pass: the live basis was measured SIGN-FLIPPED — ~11bp
+  premium, XAUt above the feed — so the axis now also covers {−50, −25} bps and a full-grid
+  ranking confirmation ran at basis 0; see the addendum below.)*
 - **Gas sensitivity:** conveyor volume decays ~1.6× from 0.2 → 25 gwei but never dies (RESULTS
   gas table) — same economics observation as the USDC venue, sharper here because recycling is
   two legs (tGBP → USDC → XAUt).
@@ -103,7 +109,7 @@ Fixed in the fetch script (normalize to ms pre-sort) + documented in `sim/data/R
 
 | Gap | Status |
 |---|---|
-| **Token–metal basis** (pool rests at d ≈ −5000 ppm; feed prices bullion, pool trades XAUt) | The venue's signature risk, resolved BY the sweep rather than assumed away: sub-basis threshold chosen on evidence (above); rest state observable in the `SwapFee` deviation stream; owner retunes on a basis-regime shift; push-then-close at the rest state strictly loses (SECURITY §2/§6, asserted) |
+| **Token–metal basis** (pool rests at d ≈ −basis; feed prices bullion, pool trades XAUt; basis SIGN-UNSTABLE — ~+50bp discount est. 2026-07-11, ~11bp premium measured 2026-07-16) | The venue's signature risk, resolved BY the sweep rather than assumed away: sub-basis threshold chosen on evidence (above), re-confirmed across {−50..+100} bps + a basis-0 full-grid ranking (addendum); rest state observable in the `SwapFee` deviation stream; owner retunes on a basis-regime shift; push-then-close at the rest state strictly loses (SECURITY §2/§6, asserted) |
 | Weekend/holiday stale-fair + feed coarseness (0.3%/24h ⇒ chunky deviation steps) | Empirical weekend-round check this pass (evidence table): heartbeats continue through the close with ~59 min window margin; late heartbeat ⇒ fail-soft flat fallback; expect more fallback minutes than USDC regardless (monitoring: `xaut_fallback_minutes.sql`) |
 | XAUt issuer risk (blacklist + `destroyBlockedFunds`, issuer proxy) | Accepted, same class as USDC's token risk: the fee-only hook never custodies; an issuer blacklist of the PoolManager would strand LP funds venue-wide — shared with every XAUt pool, not a hook defect (SECURITY §8) |
 | Trade splitting not fee-neutral | Accepted v1 (weth-verified); slope 1.0× shipped anyway on the sweep's evidence, same reasoning as USDC (gas-bounded at conveyor notionals; SECURITY §1) |
@@ -112,16 +118,18 @@ Fixed in the fetch script (normalize to ms pre-sort) + documented in `sim/data/R
 | 8-entry `FallbackReason` renumbers vs USDC's 5-entry | Documented three places incl. the dune README three-venue table; off-chain decoder copy-paste risk only |
 | Reason-code misattribution at absurd answers (A-1); events lack poolId (A-2); protocol-fee composition (A-3) | Inherited weth/usdc monitoring caveats, registered unchanged |
 | PAXG-sourced sweep (condition 4) | Dukascopy true-XAU confirmation re-sweep queued; params owner-retunable live |
-| Venue outside all existing audit scopes | External audit (deferred weth+usdc+xaut single engagement) before POL scale-up; launch POL small/capped |
+| Venue outside all existing audit scopes | Deferred weth+usdc+xaut single-engagement audit remains queued; launch POL small/capped; scale-up at operator risk tolerance (ROADMAP 2026-07-11 stance — NOT audit-gated; amended verdict condition 3) |
 
 ## Pre-deploy checklist (DEPLOY.md §X0, status today)
 
 - [x] `sim/RESULTS_XAUT.md` exists and its "Recommended starting FeeParams" ==
-      `DeployXautHook.simParams()` (10/10 fields, stamped + re-diffed this pass)
+      `DeployXautHook.simParams()` (10/10 fields, stamped + re-diffed this pass; re-confirmed
+      unchanged after the review-response pass's regenerated RESULTS — addendum)
 - [x] Both feed heartbeats/deviations re-verified live today (XAU/USD 0.3%/24h, GBP/USD
       0.15%/24h ⇒ both windows 90,000s); XAUT `decimals()` = 6 re-verified
-- [x] `make test` green at the stamped tree (456/456); sim suite green (47/47); coverage 100%
-      on `src/xaut/`
+- [x] `make test` green at the stamped tree (456/456); sim suite green (47/47 at this pass;
+      55/55 after the review-response fixes added the premium-regime, rank-rule, and
+      analysis-report safety regressions — addendum); coverage 100% on `src/xaut/`
 - [x] Fork rehearsal end-to-end (anvil): deploy → init at 0 ppm → re-run reverts
       `PoolAlreadyInitialized()` (0x7983c051); rehearsal artifacts deleted
 - [x] `make test-invariant` green on the authenticated archive RPC (37/37 across 6 suites;
@@ -138,3 +146,79 @@ Fixed in the fetch script (normalize to ms pre-sort) + documented in `sim/data/R
       surcharge classification re-synced this pass to the winner: direction-aware
       `surcharge_paying` mirroring `FeeMath.surchargePpm` at the 1000 ppm threshold),
       Etherscan verify
+
+## Addendum — review-response pass (2026-07-16, same day, post-readiness)
+
+Trigger: an external deployment review found the production calibration's basis assumption
+untested against live conditions — the sweep modeled XAUt only AT or BELOW the gold leg (basis
+{0..+100} bps discount), while live pools priced XAUt ABOVE PAXG. Verified independently, then
+fixed. Verdict on the shipped `simParams()`: **unchanged — no re-stamp warranted** (evidence
+below). All other review findings (init-script config duplication, blocklist preflight, release-
+gate contradiction) addressed in the same pass.
+
+**Live basis measurement (2026-07-16):** Chainlink XAU/USD answer **$3,980.58** vs XAUT
+**$3,985.12** (GeckoTerminal) ⇒ XAUt ≈ **+11bp OVER the metal feed** (basis ≈ −11bp,
+sign-flipped vs the ROADMAP 2026-07-11 ~+50bp-discount estimate); XAUT/PAXG ≈ +28bp (PAXG itself
+≈ −17bp under the feed). Conclusion adopted repo-wide: the basis is **small and sign-unstable**,
+not a stable discount.
+
+Response (all fresh runs this pass):
+
+1. **Basis axis extended** to {−50, −25, 0, 25, 50, 100} bps (negative = premium regime) and
+   `sim/RESULTS_XAUT.md` regenerated: **winner unchanged** ((50,10)bps / thr 1000 / slope 1.0× /
+   cap 100bps, max rank 7), premium rows **flat** vs basis 0 — house take −365 / −360 / −360 at
+   basis −50 / −25 / 0 vs −356 at the +50 design point; conveyor alive at 0.41× the static-5
+   control (dead line 0.10×); costs of the premium regime: protocol revenue ~−17%, band p50
+   ~7.6k vs ~3.9k ppm — priced, not structural.
+2. **Winner-selection rule defect found and fixed** (surfaced by the follow-up review of this
+   pass): the sweep ranked by insertion-ordered position, so configs with *bit-identical*
+   economics (exact float ties are real here — max_fee-clamped schedules produce identical
+   trajectories, verified float-exact at basis 0 in all three organic-0 cells) received
+   distinct ranks by grid order, and grid order once decided a winner label. Fixed in
+   `sim/goldsim/sweep.py`: **competition ranking** (exact ties share a rank) with max-rank
+   ties between configs broken by **total house take across cells** (declared secondary
+   objective), then lexicographically by config label if both objectives remain exactly tied —
+   unit-tested (`sim/tests/test_gold_sweep_rank.py`, including grid-order-independence), both
+   RESULTS files regenerated under the fixed rule.
+3. **Full-grid ranking at basis 0 under the fixed rule** (`make sim-sweep-xaut-basis0` →
+   `sim/RESULTS_XAUT_BASIS0.md`): the design-anchor run (basis 50) selects the shipped config
+   outright (worst rank 7). The basis-0 run alone selects the shipped config's **thr=3000
+   sibling** (worst rank 6 vs 7) — a real single-regime divergence, NOT a tie artifact (an
+   earlier draft of this addendum mischaracterized it as one; retracted). Its magnitude:
+   thr=3000 gains $12 (calm) / $122 (rally) / $0 (shock, exact tie) in the organic-0 bleed
+   cells, and gives up $2.2k / $3.3k / $1.3k to the shipped config in the three organic-1
+   cells, and **collapses to rank 39** in the canonical discount-regime shock cell. Because
+   the basis is a sign-unstable regime, the declared minimax objective applied across the
+   **union of both runs' 12 cells** selects the shipped config **uniquely**: worst rank 7,
+   next-best 9 ((30,5)/thr1000), thr=3000 sibling at 39. `simParams()` therefore stands —
+   confirmed by the rule at the regime level — and the owner retains the live
+   `setFeeParams` path to thr=3000 if a persistent near-zero/premium basis regime is
+   observed post-launch (the divergence is threshold-only; bases/slope/cap are identical).
+4. **Premium-regime side-flip pinned**: new sim regression
+   `test_premium_regime_flips_the_surcharged_side` (at a premium rest the redeem conveyor pays
+   ramp — not cap — surcharge and the mint side rides free); sim suite **55/55** (incl. five
+   rank-rule tests and two analysis-report safety tests). Basis prose
+   corrected everywhere it was wrong-signed: SECURITY §§ intro/6/7/8, hook + OracleLib + FeeMath
+   NatSpec, README venue section, DEPLOY.md §X0/§X3/§X4/§X6, dune README + histogram SQL,
+   user guide, sweep config/docstrings/render, adversarial-test NatSpec.
+5. **Deployment-edge hardening** (same review): `InitXautPool` now derives feed addresses AND
+   staleness windows from the DEPLOYED hook (`xauUsdFeed()/gbpUsdFeed()/feeParams()` — no
+   duplicated oracle config to drift); `DeployXautHook` pre-flight requires XAUt
+   `isBlocked(...) == false` for PoolManager / multisig / PositionManager / Permit2 and logs the
+   XAUt proxy implementation (EIP-1967 slot; `0x4C0d2c74A8D26f1E4F5653021c521F5471F9e566` at
+   this pass — note the getter is `isBlocked`; the legacy-Tether `isBlackListed` selectors
+   revert on this token); `InitXautPool` re-checks the blocklist pre-init; DEPLOY.md §X4 repeats
+   it pre-funding (cast one-liners).
+6. **Verdict condition 3 amended in place**: scale-up follows the ROADMAP 2026-07-11 operator
+   stance (NOT audit-gated); the deferred weth+usdc+xaut bundled audit remains queued.
+
+Evidence (fresh, this pass): `forge build` + `forge fmt` clean; `make test` **456/456**;
+`make test-invariant` **37/37** (760s, authenticated archive RPC — re-run because the NatSpec
+corrections touch hook source, comment-only); sim suite **55/55**; `make deploy-xaut-hook-dry`
+green with the new pre-flight (live blocklist clean, impl logged, fair 2,941.47e18 in-corridor);
+anvil two-step re-rehearsed green — deploy → init at **0 ppm** (fair composed from the hook's
+own config, identical to deploy's to the wei) → re-init reverts `PoolAlreadyInitialized()`
+(0x7983c051); rehearsal artifacts deleted.
+
+Unchanged by this pass: verdict condition 1 (commit + push before broadcasting — the operator
+gate) and condition 4 (PAXG gold-leg caveat / optional Dukascopy confirmation re-sweep).

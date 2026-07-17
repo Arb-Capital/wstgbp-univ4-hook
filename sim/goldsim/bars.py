@@ -4,11 +4,13 @@ Composes TWO Dukascopy minute series (XAU/USD spot gold + GBP/USD cable) into th
 two-feed fair, mirroring the hook's `x*WAD^2/(g*nav)` composition (wstGBP-per-XAUT):
 
 - fair_true(i) = xau(i)*(1 - basis) / (gbpusd(i) * nav(t_i)) — the TOKEN-market fair.
-  Chainlink XAU/USD prices the METAL; XAUt persistently trades ~0.5% below it (custody/
-  redemption friction, ROADMAP.md 2026-07-11), so the true series carries `basis_bps`
-  while the oracle series does NOT — that gap IS the venue's rest state (the pool sits at
-  d_oracle ≈ -basis, and the fee model's threshold must be sized around it; this sweep's
-  reason for existing).
+  Chainlink XAU/USD prices the METAL while the pool trades the token; the token–metal gap
+  (`basis_bps`, custody/redemption friction) is carried by the true series and NOT the
+  oracle series — that gap IS the venue's rest state (the pool sits at d_oracle ≈ -basis,
+  and the fee model's threshold must be sized around it; this sweep's reason for
+  existing). `basis_bps` may be NEGATIVE (token premium): the ~+50bp discount estimated
+  2026-07-11 had flipped to a ~11bp premium over the feed when measured 2026-07-16 — the
+  basis is small and sign-unstable, and the sensitivity axis spans both signs.
 - fair_oracle(i) = xau_committed(i) / (gbp_committed(i) * nav(t_i)) — what the hook
   computes: BOTH feeds pass through their own Chainlink deadband model (XAU/USD 0.3%/24h,
   coarser than GBP/USD's 0.15%/24h — the deviation signal steps chunkier on this venue).

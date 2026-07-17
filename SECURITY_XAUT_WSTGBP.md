@@ -24,12 +24,14 @@ Status: built and green, **NOT deployed** — mainnet hook address and poolId ar
 The venue's economic frame differs from the USDC venue's in one structural way that shapes §§4, 6
 and 7: this is the first on-chain gold/sterling market (gold-in-GBP realized vol ~37% annualized ≈
 6× cable), and its fair price is composed from a feed that prices **spot bullion, not the XAUt
-token** — the token persistently trades ~0.5% below the metal. The buy-then-redeem conveyor
-(weekly NAV ratchet; protocol earns the 25bps mint+redeem spread per round trip) exists here too,
-but at the basis rest state it reads as *non*-deviation-closing to the hook, so the USDC venue's
-skim-recapture-by-surcharge mechanism does **not** operate at rest — the conveyor's toll here is
-the redeem-side base fee, and the surcharge earns its keep on genuine deviation events instead.
-§6 is the full account.
+token** — the token trades at a small, **sign-unstable** basis to the metal (~+50bp discount
+estimated 2026-07-11; ~11bp premium — token ABOVE the feed — measured 2026-07-16). The
+buy-then-redeem conveyor (weekly NAV ratchet; protocol earns the 25bps mint+redeem spread per
+round trip) exists here too. In the discount regime the rest state reads as
+*non*-deviation-closing to the hook, so the USDC venue's skim-recapture-by-surcharge mechanism
+does **not** operate at rest — the conveyor's toll is the redeem-side base fee, and the surcharge
+earns its keep on genuine deviation events. In the premium regime the surcharged side flips to the
+conveyor (ramp-bounded; economics verified flat). §6 is the full account.
 
 ## 1. Trade splitting — NOT neutral (inherited WETH/USDC-venue finding, re-verified here)
 
@@ -101,12 +103,13 @@ mitigations.
 The surcharge is linear **from zero** at the threshold (`slope × (|d| − threshold)`), so a bundle
 that walks the deviation across the boundary finds no discontinuity to sandwich (asserted both
 sides of the boundary, on-chain). The venue-specific note is sharper here than on the USDC venue:
-the pool's *legitimate resting state* is not the wrapper band edge (±1250 ppm) but the token–metal
-basis (~−5000 ppm, §6), so where the threshold sits relative to the **basis** decides whether
-resting-state mint-side flow is surcharged at all — that is a parameter (sim-derived), not a
-mechanism property; the no-cliff property holds at any threshold. It also defuses §7's chunky feed
-steps: a single XAU/USD commit can jump |d| by ~3000 ppm, but what it jumps onto is a ramp, never
-a cliff.
+the pool's *legitimate resting state* is not the wrapper band edge (±1250 ppm) but d ≈ −basis
+(§6), whose sign is unstable. At the design-point discount it is ~−5000 ppm and threshold
+placement decides whether resting mint-side flow is surcharged; at a premium it is positive and
+the same decision applies to resting redeem-side flow instead. That is a parameter (sim-derived),
+not a mechanism property; the no-cliff property holds at any threshold. It also defuses §7's
+chunky feed steps: a single XAU/USD commit can jump |d| by ~3000 ppm, but what it jumps onto is a
+ramp, never a cliff.
 
 ## 5. Oracle fallback under load — one verdict per transaction
 
@@ -155,10 +158,13 @@ both Chainlink legs carry staleness windows, and NAV divergence is an off-chain 
 contract and no test can cover it; what IS executable is the fee behavior at the rest state, and
 that test pins all three on-chain claims below.
 
-The fact: Chainlink XAU/USD prices **spot bullion**, and XAUt persistently trades ~0.5%
-(≈5000 ppm) BELOW the metal (custody/redemption friction). The hook's fair is therefore
-metal-priced, and the pool — which trades the *token* — **rests at d ≈ −basis, not d ≈ 0**, even
-when it sits exactly at token-market fair. This is the venue's signature risk, with four verified
+The fact: Chainlink XAU/USD prices **spot bullion** while the pool trades the *token*, so the
+hook's fair is metal-priced and the pool **rests at d ≈ −basis, not d ≈ 0**, even when it sits
+exactly at token-market fair. The basis (custody/redemption friction) is small and
+**sign-unstable**: ~+50bp (≈5000 ppm) discount estimated at the venue decision (2026-07-11), but
+a ~11bp **premium** — XAUt ABOVE the feed (XAUT $3,985.12 vs XAU/USD $3,980.58; XAUT/PAXG ≈
++28bp) — measured live 2026-07-16. Treat the sign as a regime, not a constant. This is the
+venue's signature risk. In the DISCOUNT regime (basis > 0, rest d < 0) it has four verified
 consequences:
 
 1. **The conveyor is surcharge-immune at rest.** At d < 0, XAUT-in (redeem-side) flow reads as
@@ -186,6 +192,28 @@ consequences:
    *legitimate* closing regime, but the hook measures d_oracle ≈ d_true − 5000 — the closing flow
    is overcharged by roughly the basis's worth of ramp. Bounded by the cap; priced into the sweep.
 
+In the PREMIUM regime (basis < 0, rest d > 0 — the live regime measured 2026-07-16) the
+misclassification flips sides: resting *redeem-side* (conveyor) flow reads deviation-closing and
+pays base + ramp surcharge once |d| exceeds the threshold, while resting mint-side flow rides
+free (`sim/tests/test_gold_agents.py::test_premium_regime_flips_the_surcharged_side` pins the
+flip). At observed premium magnitudes the surcharge is ramp-priced — ~1bp at an 11bp premium
+under the shipped thr 1000 / slope 1.0× — nowhere near the cap. The extended basis-sensitivity
+table (`sim/RESULTS_XAUT.md`, basis {−50, −25, 0, 25, 50, 100} bps) shows anchor-cell economics
+are FLAT below basis 0: house take −365 (basis −50) vs −360 (basis 0) vs −356 (the +50 design
+point), conveyor alive at ~4× the dead threshold. The premium regime costs protocol revenue
+(~−17% vs the +50bp-discount cell) and widens the band (p50 ~7.6k vs ~3.9k ppm) but breaks
+nothing structurally. A full-grid ranking run at basis 0 lives in `sim/RESULTS_XAUT_BASIS0.md`
+(`make sim-sweep-xaut-basis0`). Taken alone it selects the shipped config's thr=3000 sibling
+(worst rank 6 vs the shipped config's 7 — an advantage worth $12–122 in the organic-0 bleed
+cells, against $1.3k–3.3k per organic-1 cell in the shipped config's favor). But the basis is a
+sign-unstable REGIME, and the same minimax objective applied across the union of both ranking
+runs' cells selects the shipped config UNIQUELY (worst rank 7; next-best 9; the thr=3000
+sibling unions at 39 via its discount-regime shock-cell collapse) — so `simParams()` stands
+confirmed by the rule at the regime level, with the single-regime divergence disclosed
+(readiness addendum, 2026-07-16; the ranking itself is competition-ranked with a declared
+total-house-take tie-break and stable config-label tertiary key — exact-tie ranks previously
+fell to grid order).
+
 The rest state arms no manipulation edge: push-then-close run at the basis rest state — on the
 undersized threshold, the adversary's best case — still strictly loses (−18.90 wstGBP,
 rest-valued; loss exceeds the closing-leg fee — asserted, §2).
@@ -195,15 +223,19 @@ Mitigation (structural, not reactive):
 1. The threshold-vs-basis axis was **resolved by the goldsim sweep, not by intuition** — and the
    sweep chose the opposite of the naive fix (`sim/RESULTS_XAUT.md`, 2026-07-16): the winner's
    threshold (1000 ppm) sits BELOW the basis, accepting consequences 2–4 as priced trade-offs.
-   Why that wins: the conveyor is surcharge-immune at rest regardless (consequence 1), so a
-   sub-basis threshold converts the resting mint side into surcharge revenue without starving the
-   venue's protocol-revenue engine, and it out-ranked every above-basis config in ALL six
-   regime×organic cells (worst-case rank 7 vs 9+). The basis-sensitivity table (basis
-   {0, 25, 50, 100} bps) shows the winner is not fragile in the basis estimate: house take stays
-   in a narrow band and conveyor volume rises with the basis, so a basis-regime shift degrades
-   nothing structurally.
-2. The owner retunes `FeeParams` if the basis regime shifts (a persistent-discount change shows up
-   directly in the `SwapFee` event stream's deviation field — the rest state is observable).
+   Why that wins: in the discount regime the conveyor is surcharge-immune at rest under any
+   threshold (consequence 1), so a sub-basis threshold converts the resting mint side into
+   surcharge revenue without starving the venue's protocol-revenue engine — and in the premium
+   regime the conveyor's resting surcharge is ramp-bounded and the anchor-cell economics stay
+   flat (the premium paragraph above) — and it out-ranked every above-basis config in ALL six
+   regime×organic cells (worst-case rank 7 vs 9+). The basis-sensitivity table (extended to basis
+   {−50, −25, 0, 25, 50, 100} bps after the 2026-07-16 sign-flip measurement) shows the winner is
+   not fragile in the basis estimate — either side of zero: house take stays in a narrow band,
+   conveyor volume rises with the basis and survives its absence, and the premium rows are flat
+   vs basis 0.
+2. The owner retunes `FeeParams` if the basis regime shifts (a persistent change in either
+   direction shows up directly in the `SwapFee` event stream's deviation field — the rest state
+   is observable).
 3. Full-loop context for the band arithmetic: the conveyor's breakeven here is ≈ 3,250 ppm
    (wrapper half-band 1250 + cross-leg ~1500 + redeem base fee) — recycling is tGBP → USDC → XAUt,
    **two** legs, vs the USDC venue's one (cost model: `sim/goldsim/costs.py`).
@@ -221,9 +253,10 @@ every week. Two possible feed behaviors, both handled:
 - **Chainlink keeps heartbeating a frozen price through the close** (the typical, observed
   behavior): fair is stale-but-fresh-looking; on-chain pool spot can drift with off-market gold
   trading, so a weekend adds **incremental deviation around the −basis rest state — not a
-  fallback state** (note it is NOT inside the threshold band: the rest state itself sits at
-  |d| ≈ 5000 ppm against the 1000 ppm threshold, so §6's resting fee split persists through the
-  close) — and Monday's reopen gap is a legitimate deviation event the surcharge is *for*.
+  fallback state** (under the 2026-07-11 discount estimate the rest state sat at |d| ≈ 5000 ppm
+  against the 1000 ppm threshold, so §6's resting fee split persisted through the close; at the
+  small live basis measured 2026-07-16 the rest state may sit inside the band until weekend drift
+  accumulates) — and Monday's reopen gap is a legitimate deviation event the surcharge is *for*.
 - **The feed pauses instead**: `updatedAt` ages past the 90,000s window (24h heartbeat + margin)
   and every swap prices at the flat `fallbackFee` until the feed resumes — degraded pricing, never
   blocked swaps (`test_xauFeedStaleFallsBack`, `testFuzz_swapNeverRevertsOnOracleState`).
@@ -231,9 +264,10 @@ every week. Two possible feed behaviors, both handled:
 Coarseness (the deviation-step texture, distinct from staleness): XAU/USD commits on a **0.3%**
 deviation or 24h heartbeat — twice the GBP/USD leg's 0.15% — so fair moves in chunky ≥3000 ppm
 steps when gold drifts, and up to ~3000 ppm of measured |d| at any moment is feed-deadband noise
-stacked on top of the ~5000 ppm basis (§6). Threshold sizing must budget for deadband + basis
-together; the goldsim bars model reproduces both Chainlink deadbands, and §4's no-cliff property
-guarantees a single feed commit that jumps |d| across the threshold lands on a ramp, not a step.
+stacked on top of the (sign-unstable, |·| ≲ 5000 ppm) basis rest state (§6). Threshold sizing
+must budget for deadband + basis together; the goldsim bars model reproduces both Chainlink
+deadbands, and §4's no-cliff property guarantees a single feed commit that jumps |d| across the
+threshold lands on a ramp, not a step.
 
 ## 8. XAUt issuer surface — ACCEPTED (same posture as the USDC venue's issuer trust)
 
@@ -254,6 +288,11 @@ upgradeable proxy), and the same class every XAUt holder bears anywhere:
 - The hook keeps working regardless: it reads feeds and overrides fees; it neither sends nor
   receives XAUt. If token-level behavior changes in a way that degrades the pool, the owner's
   `setPaused(true)` flattens pricing while LPs exit (pause changes pricing, never blocks swaps).
+
+Made executable at the deployment edges (2026-07-16 review): `DeployXautHook` pre-flight requires
+`!isBlocked(...)` for the PoolManager, multisig, PositionManager and Permit2, and logs the XAUt
+proxy implementation in force (EIP-1967 slot) into the deploy record; `InitXautPool` re-checks the
+blocklist immediately before init, and DEPLOY.md §X repeats the check before POL funding.
 
 Accepted for v1; revisit only if issuer-risk posture changes repo-wide (it would implicate the
 USDC venue equally).

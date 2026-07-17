@@ -220,8 +220,11 @@ contract XautWstGbpAdversarialTest is XautWstGbpForkBase {
     // ---------------------------------------------------------------- 6. token–metal basis rest state
 
     /// @notice THIS venue's signature risk (hook/OracleLib NatSpec, decision 2026-07-11): XAU/USD
-    ///         prices the metal, and XAUt persistently trades ~0.5% BELOW it, so the pool RESTS at
-    ///         d ≈ −basis instead of 0. Modeled by raising the metal feed ~0.5% above the level the
+    ///         prices the metal while the pool trades the token, so the pool RESTS at d ≈ −basis
+    ///         instead of 0. This test exercises the DISCOUNT regime (basis > 0, the 2026-07-11
+    ///         ~0.5% estimate; the live basis is sign-unstable — the premium regime's side-flip is
+    ///         pinned in the sim suite, `test_premium_regime_flips_the_surcharged_side`). Modeled
+    ///         by raising the metal feed ~0.5% above the level the
     ///         pool trades at. Three claims: (a) with the working threshold (1000 ppm < basis) the
     ///         RESTING mint-side flow — ordinary sterling-into-gold wrappers, not arbitrageurs — is
     ///         misclassified as deviation-closing and pays the surcharge (the accepted cost the

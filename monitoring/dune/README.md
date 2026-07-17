@@ -65,16 +65,18 @@ here, and submit the verified hook for decoding (DEPLOY.md §X6).
 | Query | Dune ID | Source |
 |---|---|---|
 | Daily fees by direction (redeem = XAUT in; deploy-date floor TBD) | TBD at deploy | `xaut_swapfee_by_direction.sql` |
-| Deviation histogram (30d; sign-split + direction-aware `surcharge_paying` — mass at d ≈ −5000 ppm is the token–metal basis rest state, BY DESIGN; at rest XAUT-in pays base only, wstGBP-in pays base + surcharge under the sub-basis threshold) | TBD at deploy | `xaut_deviation_histogram.sql` |
+| Deviation histogram (30d; sign-split + direction-aware `surcharge_paying` — mass at d ≈ −basis is the token–metal basis rest state, BY DESIGN, and the basis is SIGN-UNSTABLE: at a discount rest (d < 0) XAUT-in pays base only and wstGBP-in pays base + surcharge under the sub-basis threshold; at a premium rest (d > 0, the live 2026-07-16 regime) the sides flip, ramp-bounded) | TBD at deploy | `xaut_deviation_histogram.sql` |
 | Sustained fallback alert (alert-on-results shape; gold-market-hours caveat) | TBD at deploy | `xaut_alert_sustained_fallback.sql` |
 | Fallback minutes + reasons by day (**xaut 8-entry reason mapping**) | TBD at deploy | `xaut_fallback_minutes.sql` |
 
 The xaut hook emits the SAME event signatures (`SwapFee`, `OracleFallback` — identical topic0s) as
 the weth and usdc hooks. Venue-specific: mint side = wstGBP-in (currency0 in), redeem = XAUT-in;
-the histogram is sign-split because the venue's signature is the **token–metal basis** — XAUt
-trades ~0.5% below the XAU/USD metal feed, so the pool RESTS at d ≈ −5000 ppm (design, not drift;
-at rest the redeem conveyor reads non-closing and is never surcharged — watch for regime shifts,
-not the rest mass); and expect MORE fallback minutes than the usdc venue — gold closes
+the histogram is sign-split because the venue's signature is the **token–metal basis** — the feed
+prices the metal while the pool trades the token, so the pool RESTS at d ≈ −basis (design, not
+drift; the basis is small and sign-unstable — ~+50bp discount estimated 2026-07-11, ~11bp premium
+measured 2026-07-16 — so the rest mass may sit either side of zero, and which side is surcharged
+at rest flips with the sign; watch for regime shifts, not the rest mass); and expect MORE
+fallback minutes than the usdc venue — gold closes
 weekends/holidays, and a paused feed over the close means expected staleness fallback (a
 frozen-but-heartbeating feed just means flat fair). Reason codes RENUMBER again (table above);
 never point another venue's reason decoder at the xaut hook.

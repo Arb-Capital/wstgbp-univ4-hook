@@ -13,10 +13,11 @@ pragma solidity ^0.8.26;
 ///      `deviationPpm = pool(wstGBP-per-XAUT) / fair − 1`, so
 ///      - `d > 0` — the pool prices XAUT *rich* (wstGBP cheap); the closing flow sells XAUT — buys
 ///        wstGBP — and the redeem side pays. This is the post-NAV-ratchet conveyor state (and the
-///        token–metal basis rest state: XAUt trades below the metal feed, so the pool sits at
-///        d ≈ −basis — see the hook NatSpec).
+///        basis rest state d ≈ −basis when XAUt trades at a PREMIUM to the metal feed — the live
+///        regime measured 2026-07-16; see the hook NatSpec).
 ///      - `d < 0` — the pool prices XAUT *cheap* (wstGBP rich); the closing flow sells wstGBP
-///        (mint side pays). A gold rally raises fair and lands here too.
+///        (mint side pays). A gold rally raises fair and lands here too (as does the basis rest
+///        state in the DISCOUNT regime — the 2026-07-11 estimate; the basis is sign-unstable).
 ///      Flow pushing the pool away from fair value, or trading inside the threshold band, pays base only.
 ///
 ///      This venue's `FeeParams` has TEN fields (two oracle feeds ⇒ two staleness windows), the WETH

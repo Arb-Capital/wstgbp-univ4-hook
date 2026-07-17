@@ -6,18 +6,28 @@ Grid design notes (venue decisions, 2026-07-15):
   cable's — a wider uninformed-flow edge may earn its keep on this venue where it could
   not on a near-stable pair. min_fee = 50 ppm for the whole grid.
 - Thresholds: {1000, 3000, 5000, 7000} ppm — THE axis this sweep exists for: the pool
-  RESTS at d ≈ -basis (~5000 ppm, token-metal basis; ROADMAP.md 2026-07-11), so the
-  threshold must decide whether the rest state itself is surcharged (always-on toxicity
-  pricing) or only excursions beyond it. Spans below-basis, at-basis and above-basis.
+  RESTS at d ≈ -basis (grid designed against the ~5000 ppm discount estimate of
+  ROADMAP.md 2026-07-11; live measurement 2026-07-16 puts the basis near zero and
+  sign-flipped — see the basis-sensitivity note below), so the threshold must decide
+  whether the rest state itself is surcharged (always-on toxicity pricing) or only
+  excursions beyond it. Spans below-basis, at-basis and above-basis.
 - Slopes {0.25, 0.5, 1.0}x; caps {20, 60, 100} bps (100 added for gilt/gold-shock scale
   dislocations — this pair's p95 deviations run larger than cable's).
 - Baselines: static-5 (conveyor-viability control — no live static pool exists for this
   pair, unlike the USDC venue) and static-30.
 - Cells: 3 regimes x organic {0, 1}/hr at basis 50 bps. Ranking: house take,
-  worst-case rank across all six cells, conveyor-dead override ranks dead configs last.
+  worst-case rank across all six cells, conveyor-dead override ranks dead configs last;
+  ranks are competition-ranked (exact ties share a rank) and max-rank ties between
+  configs break by total house take across cells, then config label if still exact,
+  never grid order (2026-07-16 review — exact ties are real: max_fee-clamped schedules
+  produce bit-identical trajectories).
 - Extra vs cablesim: a BASIS-SENSITIVITY table (winner + control across basis
-  {0, 25, 50, 100} bps in the range-2023/organic-0 cell) — the basis is an estimate, not
-  a measurement; the winner must not be fragile in it.
+  {-50, -25, 0, 25, 50, 100} bps in the range-2023/organic-0 cell) — the basis is an
+  estimate, not a measurement, and it is SIGN-UNSTABLE: the ~+50bp discount estimated
+  2026-07-11 had flipped to a ~11bp premium (XAUt ABOVE the metal feed) when measured
+  2026-07-16, so the axis spans both signs. The winner must not be fragile either side
+  of zero. A full-grid ranking confirmation at basis 0 lives in RESULTS_XAUT_BASIS0.md
+  (`make sim-sweep-xaut-basis0`).
 """
 
 from dataclasses import replace
@@ -25,6 +35,7 @@ import concurrent.futures as cf
 import hashlib
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 
@@ -40,7 +51,7 @@ SLOPES = [250_000, 500_000, 1_000_000]
 CAPS = [2000, 6000, 10_000]
 ORGANIC_AXIS = [0.0, 1.0]  # per hour
 GAS_SENSITIVITY_GWEI = [0.2, 1.0, 5.0, 25.0]
-BASIS_SENSITIVITY_BPS = [0.0, 25.0, 50.0, 100.0]
+BASIS_SENSITIVITY_BPS = [-50.0, -25.0, 0.0, 25.0, 50.0, 100.0]
 CONVEYOR_DEAD_FRACTION = 0.10
 
 # Each worker rebuilds two multi-month 1m bar series per job; a full-cpu_count pool on a
@@ -99,7 +110,14 @@ def _one(args):
     return regime["name"], organic, gwei, basis_bps, res
 
 
-def run_sweep(regimes: list[dict], nav_cfg: dict, basis_bps: float, out_path: str, git_rev: str = "") -> None:
+def run_sweep(
+    regimes: list[dict],
+    nav_cfg: dict,
+    basis_bps: float,
+    out_path: str,
+    git_rev: str = "",
+    analysis_only: bool = False,
+) -> None:
     cfgs = grid()
     jobs = [(r, nav_cfg, cfg, organic, None, basis_bps) for r in regimes for organic in ORGANIC_AXIS for cfg in cfgs]
 
@@ -137,7 +155,19 @@ def run_sweep(regimes: list[dict], nav_cfg: dict, basis_bps: float, out_path: st
             basis_res[(b, res.label)] = res
     basis_rows = [(b, basis_res[(b, winner)], basis_res[(b, _label(ctl_cfg))]) for b in BASIS_SENSITIVITY_BPS]
 
-    render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_rows, out_path, git_rev)
+    render(
+        regimes,
+        nav_cfg,
+        basis_bps,
+        cells,
+        winner,
+        win_cfg,
+        gas_rows,
+        basis_rows,
+        out_path,
+        git_rev,
+        analysis_only=analysis_only,
+    )
 
 
 def _label(cfg: RunConfig) -> str:
@@ -165,21 +195,64 @@ def _rank_key(r: RunResult):
     return (1 if r.conveyor_dead else 0, -r.house_take_usd)
 
 
+def _competition_ranks(results) -> list[tuple[int, RunResult]]:
+    """Rows sorted by `_rank_key`, competition-ranked ('1224'): rows whose key is EXACTLY
+    equal share a rank of 1 + the number of strictly better rows. Exact ties are real on
+    this venue — configs whose fee schedules clamp to max_fee over an identical fill
+    sequence produce bit-identical economics (verified float-exact at basis 0) — and the
+    previous insertion-ordered ranking let GRID ORDER decide the minimax winner between
+    them (review finding 2026-07-16). Returns [(rank, result), ...] in sorted order."""
+    rows = sorted(results, key=_rank_key)
+    ranked: list[tuple[int, RunResult]] = []
+    prev_key: tuple | None = None
+    rank = 0
+    for i, res in enumerate(rows):
+        key = _rank_key(res)
+        if key != prev_key:
+            rank = i + 1
+            prev_key = key
+        ranked.append((rank, res))
+    return ranked
+
+
 def _pick_winner(cells) -> str:
+    """Minimax competition rank across cells; max-rank ties between configs break by
+    TOTAL house take across all cells (the declared secondary objective). If both
+    objectives tie exactly, config label is the stable tertiary key — never grid order."""
     ranks: dict[str, int] = {}
+    totals: dict[str, float] = {}
     for _, results in cells.items():
-        rows = sorted(results, key=_rank_key)
-        for i, res in enumerate(rows):
+        for rank, res in _competition_ranks(results):
             if res.label.startswith("baseline"):
                 continue
-            ranks[res.label] = max(ranks.get(res.label, 0), i + 1)
-    return min(ranks.items(), key=lambda kv: kv[1])[0]
+            ranks[res.label] = max(ranks.get(res.label, 0), rank)
+            totals[res.label] = totals.get(res.label, 0.0) + res.house_take_usd
+    return min(ranks.items(), key=lambda kv: (kv[1], -totals[kv[0]], kv[0]))[0]
 
 
-def render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_rows, out_path, git_rev):
+def render(
+    regimes,
+    nav_cfg,
+    basis_bps,
+    cells,
+    winner,
+    win_cfg,
+    gas_rows,
+    basis_rows,
+    out_path,
+    git_rev,
+    analysis_only=False,
+):
     lines = []
+    regen = (
+        shlex.join(
+            ["python3", "sim/run_sweep_xaut.py", "--basis-bps", f"{basis_bps:g}", "--out", str(out_path)]
+        )
+        if analysis_only
+        else "make sim-sweep-xaut"
+    )
     lines.append("# XAUT/wstGBP (gold venue) fee-parameter sweep results\n")
-    lines.append("Generated by `sim/run_sweep_xaut.py` — do not edit by hand; rerun `make sim-sweep-xaut`.\n")
+    lines.append(f"Generated by `sim/run_sweep_xaut.py` — do not edit by hand; rerun `{regen}`.\n")
     lines.append(f"- git rev: `{git_rev or 'unknown'}`")
     lines.append(
         f"- NAV model: DISCRETE weekly ratchet, {nav_cfg.get('step_bps', 9.0)} bps every "
@@ -192,10 +265,12 @@ def render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_
         "read live (as on-chain)"
     )
     lines.append(
-        f"- TOKEN-METAL BASIS: {basis_bps:g} bps — XAUt trades below the metal feed, so the pool "
-        "RESTS at d ≈ -basis and the hook misclassifies resting mint-side flow; ranking cells run "
-        "at this basis, and the winner's fragility in it is tabled below (the basis is an "
-        "estimate, not a measurement)"
+        f"- TOKEN-METAL BASIS: {basis_bps:g} bps (positive = XAUt BELOW the metal feed) — the pool "
+        "RESTS at d ≈ -basis, so the sign decides which side is misclassified at rest (discount: "
+        "mint side surcharged; premium: the redeem conveyor pays the ramp). Ranking cells run at "
+        "this basis; the winner's fragility across BOTH signs is tabled below. The basis is an "
+        "estimate and sign-unstable in live data (~+50bp discount est. 2026-07-11; ~11bp premium "
+        "measured 2026-07-16)"
     )
     lines.append(
         f"- POL {int(RunConfig('static5').pol_tvl_wsg):,} wstGBP over a x{RunConfig('static5').range_width:g} "
@@ -219,9 +294,9 @@ def render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_
     ranks: dict[str, dict[str, int]] = {}
     for (regime_name, organic), results in sorted(cells.items()):
         cell = f"{regime_name} / organic {organic:g}/hr"
-        rows = sorted(results, key=_rank_key)
-        for i, res in enumerate(rows):
-            ranks.setdefault(res.label, {})[cell] = i + 1
+        ranked = _competition_ranks(results)
+        for rank, res in ranked:
+            ranks.setdefault(res.label, {})[cell] = rank
         lines.append(f"## Cell: {cell}\n")
         lines.append(
             "| # | config | house take (USD) | (bps of TVL) | LP PnL vs 50/50 | protocol rev | "
@@ -229,9 +304,9 @@ def render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_
             "ratchets | lag p50 (bars) | band p50/p95 (ppm) | fills | breach | dead |"
         )
         lines.append("|---|" + "---|" * 15)
-        for i, res in enumerate(rows):
+        for rank, res in ranked:
             lines.append(
-                f"| {i + 1} | {res.label} | {res.house_take_usd:,.0f} | {res.house_take_bps:,.1f} | "
+                f"| {rank} | {res.label} | {res.house_take_usd:,.0f} | {res.house_take_bps:,.1f} | "
                 f"{res.pol_pnl_vs_bench_usd:,.0f} | {res.protocol_rev_usd:,.0f} | "
                 f"{res.fees_base_usd:,.0f} / {res.fees_surcharge_usd:,.0f} | "
                 f"{res.redeem_vol_wsg:,.0f} | {res.mint_vol_wsg:,.0f} | {res.searcher_pnl_usd:,.0f} | "
@@ -241,6 +316,13 @@ def render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_
         lines.append("")
 
     lines.append("## Cross-cell robustness (rank per cell; lower is better; dead ranks last)\n")
+    lines.append(
+        "Ranks are COMPETITION ranks ('1224'): rows with bit-identical (dead, house take) keys "
+        "share a rank — exact ties are real here (max_fee-clamped schedules produce identical "
+        "trajectories), and letting grid order split them once decided a winner (2026-07-16 "
+        "review). Winner = min of max rank; max-rank ties break by total house take across cells; "
+        "an exact tie on both objectives breaks lexicographically by config label."
+    )
     cell_names = [f"{rn} / organic {o:g}/hr" for (rn, o) in sorted(cells.keys())]
     lines.append("| config | " + " | ".join(cell_names) + " | max rank |")
     lines.append("|---|" + "---|" * (len(cell_names) + 1))
@@ -269,9 +351,12 @@ def render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_
 
     lines.append("## Basis sensitivity (range regime, organic 0; winner vs static-5 control)\n")
     lines.append(
-        "The token-metal basis is an ESTIMATE (~50 bps observed; feed prices the metal, the pool"
-        " trades the token). The winner must not be fragile in it: watch for the conveyor dying or"
-        " house take inverting as the rest-state deviation crosses the threshold."
+        "The token-metal basis is an ESTIMATE and SIGN-UNSTABLE (~+50 bps discount estimated"
+        " 2026-07-11; ~11 bps premium measured 2026-07-16 — the feed prices the metal, the pool"
+        " trades the token). Negative rows model the premium regime, where the rest state flips"
+        " to d > 0 and the redeem conveyor pays ramp surcharge. The winner must not be fragile"
+        " either side of zero: watch for the conveyor dying or house take inverting as the"
+        " rest-state deviation crosses the threshold."
     )
     lines.append(
         "| basis (bps) | winner house take | winner redeem vol | winner fees base/surcharge | "
@@ -287,11 +372,24 @@ def render(regimes, nav_cfg, basis_bps, cells, winner, win_cfg, gas_rows, basis_
     lines.append("")
 
     p = win_cfg.params
-    lines.append("## Recommended starting FeeParams (10-field XAUT-venue shape)\n")
-    lines.append(f"Winner by worst-case cross-cell rank: **{winner}**. Review the tables before")
-    lines.append("adopting — the block below feeds `script/DeployXautHook.s.sol::simParams()`, which the")
-    lines.append("production-params smoke tests import directly (no duplicated constants; the fork fixture")
-    lines.append("deliberately keeps separate working defaults).\n")
+    if analysis_only:
+        lines.append("## This run's winner (analysis only — NOT the production stamp)\n")
+        lines.append("Winner by worst-case cross-cell competition rank (ties break by total house take,")
+        lines.append("then config label if still exact):")
+        lines.append(f"**{winner}**. This file is the alternate-basis regime leg of a TWO-REGIME")
+        lines.append("decision: production params are stamped from the design-anchor run")
+        lines.append("(`sim/RESULTS_XAUT.md`) and confirmed by the same minimax objective across the UNION")
+        lines.append("of both runs' cells — this run's winner alone does NOT feed")
+        lines.append("`DeployXautHook.simParams()` (two-regime record:")
+        lines.append("`docs/READINESS_XAUT_WSTGBP_2026-07-16.md`, review-response addendum).\n")
+    else:
+        lines.append("## Recommended starting FeeParams (10-field XAUT-venue shape)\n")
+        lines.append("Winner by worst-case cross-cell competition rank (ties break by total house take,")
+        lines.append("then config label if still exact):")
+        lines.append(f"**{winner}**. Review the tables before")
+        lines.append("adopting — the block below feeds `script/DeployXautHook.s.sol::simParams()`, which the")
+        lines.append("production-params smoke tests import directly (no duplicated constants; the fork fixture")
+        lines.append("deliberately keeps separate working defaults).\n")
     lines.append("```")
     lines.append(f"baseFeeMintSide       = {p.base_fee_mint_side}")
     lines.append(f"baseFeeRedeemSide     = {p.base_fee_redeem_side}")

@@ -93,7 +93,8 @@ def test_fee_charged_at_oracle_deviation_profit_at_true():
 
 
 def test_redeem_conveyor_is_never_surcharged_at_the_basis_rest_state():
-    # At rest the pool is RICH vs token fair (d_true > 0) but CHEAP vs metal fair
+    # DISCOUNT regime (XAUt below the metal feed — the 2026-07-11 estimate): at rest the
+    # pool is RICH vs token fair (d_true > 0) but CHEAP vs metal fair
     # (d_oracle ~ d_true - basis < 0): redeem-side flow does not "close" the oracle
     # deviation, so no threshold setting can surcharge the conveyor here — the
     # misclassification lands on the MINT side instead (see the acceptance suite).
@@ -106,3 +107,23 @@ def test_redeem_conveyor_is_never_surcharged_at_the_basis_rest_state():
     assert feemath.surcharge_ppm(False, d_oracle, p) == 0
     # a mint-side trade at the same rest state IS surcharged under a low threshold.
     assert feemath.surcharge_ppm(True, d_oracle, p) > 0
+
+
+def test_premium_regime_flips_the_surcharged_side():
+    # PREMIUM regime — the MIRROR, live when measured 2026-07-16 (XAUt ~11bp ABOVE the
+    # metal feed): the rest state sits at d_oracle > 0, so the redeem conveyor reads
+    # deviation-CLOSING and pays ramp surcharge under a sub-|basis| threshold while
+    # resting mint-side flow rides free. Ramp, not cap — the extended basis-sensitivity
+    # table (RESULTS_XAUT.md, basis {-50..100}) prices this regime; anchor-cell
+    # economics stay flat below basis 0 (SECURITY_XAUT_WSTGBP.md §6).
+    premium = 0.0025  # 25bp token premium == negative basis
+    rest_price = FAIR_ORACLE * (1 + premium)  # pool at rest == token-market fair
+    pool = Pool.make(rest_price, 1.0, 1.50)
+    d_oracle = feemath.deviation_ppm(pool.price, FAIR_ORACLE)
+    assert d_oracle > 0  # rich in the hook's eyes
+    p = feemath.FeeParams(deviation_threshold_ppm=1000, toxicity_slope_ppm=1_000_000)
+    # redeem side now closes the positive oracle deviation => ramp surcharge...
+    surcharge = feemath.surcharge_ppm(False, d_oracle, p)
+    assert 0 < surcharge < p.surcharge_cap_ppm  # ...priced on the ramp, not the cap.
+    # mint side opens it => base only.
+    assert feemath.surcharge_ppm(True, d_oracle, p) == 0

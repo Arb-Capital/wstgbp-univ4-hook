@@ -310,16 +310,28 @@ Status: **BUILT, NOT YET DEPLOYED** — the goldsim sweep + readiness pass gate 
       `make sim-sweep-xaut` — the cable target supplies the shared GBP legs) and its
       "Recommended starting FeeParams" == `DeployXautHook.simParams()` (synced 2026-07-16:
       (50,10)bps bases, thr 1000, slope 1.0x, cap 100bps, minFee 50, fallback 5000, both windows
-      90000 — the threshold sits deliberately BELOW the ~5000 ppm token–metal basis, see
-      `SECURITY_XAUT_WSTGBP.md` §6). Gold leg was PAXG (documented fallback); if the Dukascopy
+      90000 — the threshold sits deliberately BELOW the token–metal basis magnitude, see
+      `SECURITY_XAUT_WSTGBP.md` §6; the basis is SIGN-UNSTABLE, and production is confirmed by
+      the minimax across the UNION of the basis-50 and basis-0 ranking runs (worst rank 7 vs 9
+      next-best) — the basis-0 run ALONE picks the thr=3000 sibling (analysis:
+      `sim/RESULTS_XAUT_BASIS0.md`; decision: the readiness addendum), plus sensitivity across
+      basis {−50..100} bps). Gold leg was PAXG (documented fallback); if the Dukascopy
       true-XAU confirmation re-sweep has landed since, re-check the winner still matches.
 - [ ] BOTH feed heartbeats/deviations re-verified against Chainlink docs **today**: XAU/USD
       `0x214e…a0D6` (0.3% / 24h ⇒ window 90000s) and GBP/USD `0x5c0A…d4b5` (0.15% / 24h ⇒ window
       90000s); retune the two staleness windows in `simParams()` if they changed.
-- [ ] The token–metal basis section read (hook NatSpec + `SECURITY_XAUT_WSTGBP.md`): XAUt trades
-      ~0.5% BELOW the XAU/USD metal feed, so the pool RESTS at d ≈ −5000 ppm. That is the venue's
-      designed rest state, not drift — it shapes the post-init drift note (§X3), the POL bracket
-      (§X4), and the deviation-histogram reading (§X6).
+- [ ] The token–metal basis section read (hook NatSpec + `SECURITY_XAUT_WSTGBP.md` §6): the pool
+      RESTS at d ≈ −basis, and the basis is small and SIGN-UNSTABLE (~+50bp discount estimated
+      2026-07-11; ~11bp premium measured 2026-07-16 — rest state may sit either side of zero).
+      That is the venue's designed rest state, not drift — it shapes the post-init drift note
+      (§X3), the POL bracket (§X4), and the deviation-histogram reading (§X6). **Measure the live
+      basis today** (XAUT market price vs the XAU/USD feed answer) and record it in the deploy
+      notes.
+- [ ] XAUt issuer-surface preflight will run in the deploy script (blocklist `isBlocked` on
+      PoolManager/multisig/PositionManager/Permit2 + EIP-1967 impl logged); nothing to do here,
+      but if the impl address logged at deploy differs from the one recorded at the readiness
+      pass (`0x4C0d2c74A8D26f1E4F5653021c521F5471F9e566`, 2026-07-16), STOP and re-review §8 of
+      `SECURITY_XAUT_WSTGBP.md` before proceeding.
 - [ ] `make test` green incl. the `XautWstGbp*` suites; `make test-invariant` green (authenticated
       archive RPC, per §0); the venue's own readiness/security pass done at the deploy rev.
 
@@ -357,11 +369,15 @@ Same init-race posture and front-run recovery as §3 (permissionless init, predi
 if front-run at a bad price, DO NOT fund; arb it to fair through the hook's own fee schedule or
 abandon the key). tickSpacing is **60** (high-vol pair — gold-in-GBP ~37% annualized — with wide
 POL brackets, so ~0.6% edge quantization is immaterial; the USDC venue's spacing-1 tight-bracket
-rationale does not apply). The script initializes at the **METAL fair** (the same two-feed
-OracleLib composition the hook prices with) and post-asserts |deviation| < 1000 ppm. Expect the
-pool to drift to d ≈ −basis (~−50 bps) after funding + the first arb — the designed rest state,
-NOT a mispriced init; do not "fix" it by initializing at fair×(1−basis), which would hardcode a
-basis estimate and break the deviation assert.
+rationale does not apply). The script initializes at the **METAL fair**, composed through the
+same OracleLib the hook prices with **using the deployed hook's own feed addresses and staleness
+windows** (read from the hook, never duplicated — a retuned deploy cannot drift out from under
+init), and post-asserts |deviation| < 1000 ppm. It also re-checks the XAUt blocklist for the
+PoolManager and multisig. Expect the pool to drift to d ≈ −basis after funding + the first arb —
+the designed rest state, NOT a mispriced init (|basis| ≲ 50 bps and sign-unstable: discount ⇒
+d < 0, premium ⇒ d > 0 — the live 2026-07-16 measurement was a ~11bp premium); do not "fix" it by
+initializing at fair×(1−basis), which would hardcode a basis estimate and break the deviation
+assert.
 
 ## X3½. Verify + spot checks
 
@@ -391,10 +407,22 @@ and launch; compute them at funding time from the live fair. The METHOD is decid
   low-side headroom).
 - The UI snaps to tickSpacing 60 (~0.6% price steps) — immaterial at this bracket width; take the
   snapped ticks and record them.
-- **Small test add first**, probe swap, confirm the fee schedule (mint side = wstGBP in; at the
-  basis rest state the redeem side must read non-closing and pay base only), then real size per
-  operator sizing. Revisit `sim/RESULTS_XAUT.md`'s fee conclusions if funding materially differs
-  from its POL assumption.
+- **Immediately before funding, repeat the XAUt blocklist checks** (the deploy/init preflights
+  may be hours stale by now; SECURITY §8):
+
+  ```bash
+  XAUT=0x68749665FF8D2d112Fa859AA293F07A622782F38
+  for a in 0x000000000004444c5dc75cB358380D2e3dE08A90 0x846a655a4fA13d86B94966DFDf4D9a070e554f7c \
+           0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e 0x000000000022D473030F116dDEE9F6B43aC78BA3; do
+    cast call $XAUT "isBlocked(address)(bool)" $a   # all must be false
+  done
+  cast storage $XAUT 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc  # impl unchanged?
+  ```
+- **Small test add first**, probe swap, confirm the fee schedule (mint side = wstGBP in; which
+  side reads closing at rest depends on the live basis SIGN — at a discount the redeem side must
+  read non-closing and pay base only, at a premium it pays base + a small ramp surcharge), then
+  real size per operator sizing. Revisit `sim/RESULTS_XAUT.md`'s fee conclusions if funding
+  materially differs from its POL assumption.
 
 ## X5. Predecessor migration — NONE (contrast §U5)
 
@@ -415,6 +443,7 @@ ROADMAP decision 2026-07-11) and are ignored, not migrated.
   in `monitoring/dune/README.md`, and submit the verified hook for decoding. Reason codes
   RENUMBER again (8-entry enum, XAU/USD in the weth numbering's ETH/USD position — still ≠ the
   usdc 5-entry mapping); use `xaut_fallback_minutes.sql`, never another venue's decoder.
-  Deviation-histogram mass at d ≈ −5000 ppm is the designed basis rest state, not an incident —
-  investigate regime shifts, not the rest mass.
+  Deviation-histogram mass at d ≈ −basis is the designed rest state, not an incident — and the
+  basis is sign-unstable (|·| ≲ 5000 ppm; a ~11bp PREMIUM ⇒ rest mass at small d > 0 was the live
+  regime measured 2026-07-16) — investigate regime shifts, not the rest mass.
 - All other incident procedures (§7) apply verbatim with the xaut addresses.

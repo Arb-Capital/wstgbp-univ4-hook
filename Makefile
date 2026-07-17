@@ -39,7 +39,7 @@ INVARIANT_MATCH := Invariants
 COVERAGE_SKIP := (Invariants|WethWstGbpGasTest|UsdcWstGbpGasTest|XautWstGbpGasTest)
 
 .PHONY: build test test-invariant test-all fmt clean coverage gen-report serve-report deploy deploy-dry deploy-hook-helper deploy-hook-helper-dry snapshot snapshot-check \
-	sim-test sim-sweep sim-data sim-sweep-usdc sim-data-cable sim-sweep-xaut sim-data-gold sim-data-gold-xau \
+	sim-test sim-sweep sim-data sim-sweep-usdc sim-data-cable sim-sweep-xaut sim-sweep-xaut-basis0 sim-data-gold sim-data-gold-xau \
 	deploy-weth-hook deploy-weth-hook-dry verify-weth-hook init-weth-pool init-weth-pool-dry \
 	deploy-usdc-hook deploy-usdc-hook-dry verify-usdc-hook init-usdc-pool init-usdc-pool-dry \
 	deploy-xaut-hook deploy-xaut-hook-dry verify-xaut-hook init-xaut-pool init-xaut-pool-dry
@@ -159,6 +159,11 @@ sim-data-cable :; sim/data/fetch_dukascopy.sh
 # token-metal basis sensitivity table). Needs the gold + GBP/USD regime CSVs
 # (make sim-data-gold, plus make sim-data-cable for the shared GBP legs).
 sim-sweep-xaut :; python3 sim/run_sweep_xaut.py
+
+# Full-grid ranking confirmation at basis 0 — the premium-regime check (live 2026-07-16 the
+# token-metal basis had sign-flipped to a small XAUt premium; the canonical ranking above runs
+# at the conservative 50bp-discount anchor).
+sim-sweep-xaut-basis0 :; python3 sim/run_sweep_xaut.py --basis-bps 0 --out sim/RESULTS_XAUT_BASIS0.md
 
 # Download the gold-leg 1m regime bars the sweep config actually points at: Binance PAXG/USDT
 # monthly klines (the ACTIVE source — no key, no throttle; sim/data/README.md documents the

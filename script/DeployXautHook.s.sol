@@ -14,6 +14,12 @@ import {OracleLib} from "../src/xaut/lib/OracleLib.sol";
 import {IAggregatorV3} from "../src/xaut/interfaces/IAggregatorV3.sol";
 import {Iwsgem} from "../src/core/interfaces/Iwsgem.sol";
 
+/// @dev XAUt (Tether Gold) issuer-blocklist probe — `isBlocked` verified live 2026-07-16
+///      (the legacy-Tether `isBlackListed`/`getBlackListStatus` selectors revert on this token).
+interface IXautBlocklist {
+    function isBlocked(address account) external view returns (bool);
+}
+
 /// @notice Mines + CREATE2-deploys the `XautWstGbpHook` (fee-only dynamic-fee hook for the
 ///         XAUT/wstGBP pool) with the sim-recommended FeeParams (sim/RESULTS_XAUT.md) baked into
 ///         the constructor and the Arb Capital multisig as owner FROM CONSTRUCTION — no
@@ -35,6 +41,14 @@ contract DeployXautHook is Script {
     /// @dev Arb Capital multisig — `setFeeParams` / `setPaused` owner (Ownable2Step for any LATER
     ///      transfer; construction assigns directly).
     address internal constant MULTISIG = 0x846a655a4fA13d86B94966DFDf4D9a070e554f7c;
+    /// @dev Fixed protocol parties that will hold or move XAUt for this venue — checked against the
+    ///      token's issuer blocklist in pre-flight (SECURITY_XAUT_WSTGBP.md §8; the accepted issuer
+    ///      surface, made executable). PositionManager + Permit2 are the POL-funding path.
+    address internal constant POSITION_MANAGER = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
+    address internal constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
+    /// @dev EIP-1967 implementation slot — XAUt is an issuer-controlled upgradeable proxy; the
+    ///      current implementation is logged so the deploy record pins what was reviewed.
+    bytes32 internal constant EIP1967_IMPL_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     /// @dev Composed-fair-price plausibility corridor (wstGBP per XAUT, WAD): fair sits in the low
     ///      thousands-e18 (gold ~$2,300–3,100 in GBP·NAV terms at 2026 values). A missed
@@ -48,12 +62,21 @@ contract DeployXautHook is Script {
     /// @dev The sim/RESULTS_XAUT.md winner (goldsim sweep 2026-07-16, PAXG gold leg): bases
     ///      (50,10) bps, threshold 1000 ppm, slope 1.0x, cap 100 bps — best worst-case rank
     ///      across all six regime×organic cells (max rank 7; next best 9). The threshold sits
-    ///      BELOW the ~5000 ppm token–metal basis deliberately: the redeem conveyor reads
-    ///      non-closing at the rest state (never surcharged), so a sub-basis threshold turns the
-    ///      misclassified resting mint side into surcharge revenue without starving the conveyor —
-    ///      confirmed non-fragile across basis {0,25,50,100} bps and gas 0.2–25 gwei (RESULTS
-    ///      sensitivity tables). The production-params smoke test in test/XautWstGbpHook.t.sol
-    ///      imports THIS function, value-generically.
+    ///      BELOW the token–metal basis magnitude deliberately (grid designed at the ~5000 ppm
+    ///      discount estimate): in the discount regime the redeem conveyor reads non-closing at
+    ///      rest (never surcharged) and the sub-basis threshold turns the misclassified resting
+    ///      mint side into surcharge revenue without starving the conveyor. The basis is
+    ///      SIGN-UNSTABLE in live data (~11bp PREMIUM measured 2026-07-16): in the premium
+    ///      regime the surcharged side flips to the conveyor (ramp, not cap) — confirmed
+    ///      non-fragile across basis {-50,-25,0,25,50,100} bps and gas 0.2–25 gwei (RESULTS
+    ///      sensitivity tables). The basis is SIGN-UNSTABLE in live data, so ranking runs exist
+    ///      for BOTH regimes: this config wins the design-anchor run (basis 50) outright and is
+    ///      the UNIQUE minimax winner across the union of both runs' cells (worst rank 7 vs 9
+    ///      next-best; RESULTS_XAUT_BASIS0.md + readiness addendum). The basis-0 run alone picks
+    ///      the thr=3000 sibling (rank 6 vs 7, worth $12–122 in the organic-0 bleed cells) —
+    ///      which collapses to rank 39 in the discount regime and loses $1.3k–3.3k per
+    ///      organic-1 cell, so it is not shipped. The production-params smoke test in
+    ///      test/XautWstGbpHook.t.sol imports THIS function, value-generically.
     function simParams() public pure returns (FeeMath.FeeParams memory p) {
         p = FeeMath.FeeParams({
             baseFeeMintSide: 5000,
@@ -77,6 +100,14 @@ contract DeployXautHook is Script {
         require(IAggregatorV3(XAU_USD_FEED).decimals() == 8, "DeployXautHook: XAU/USD decimals");
         require(IAggregatorV3(GBP_USD_FEED).decimals() == 8, "DeployXautHook: GBP/USD decimals");
         require(IERC20Metadata(XAUT).decimals() == 6, "DeployXautHook: XAUT decimals");
+        // XAUt issuer surface (SECURITY §8): none of the fixed protocol parties may be on the
+        // token's blocklist, and the proxy implementation in force is logged for the deploy record.
+        // Re-checked at init (InitXautPool) and again manually before POL funding (DEPLOY.md §X).
+        require(!IXautBlocklist(XAUT).isBlocked(POOL_MANAGER), "DeployXautHook: PoolManager blocked by XAUt");
+        require(!IXautBlocklist(XAUT).isBlocked(MULTISIG), "DeployXautHook: multisig blocked by XAUt");
+        require(!IXautBlocklist(XAUT).isBlocked(POSITION_MANAGER), "DeployXautHook: PositionManager blocked by XAUt");
+        require(!IXautBlocklist(XAUT).isBlocked(PERMIT2), "DeployXautHook: Permit2 blocked by XAUt");
+        console2.log("XAUt proxy implementation:", address(uint160(uint256(vm.load(XAUT, EIP1967_IMPL_SLOT)))));
         // Compose the fair price through the SAME library the hook uses: feeds fresh, the wrapper
         // NAV live, and the result inside the plausibility corridor.
         (uint256 fairWad, OracleLib.FallbackReason reason) = OracleLib.fairPriceWad(

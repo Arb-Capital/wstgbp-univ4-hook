@@ -12,17 +12,27 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 
 import {XautWstGbpHook} from "../src/xaut/XautWstGbpHook.sol";
 import {OracleLib} from "../src/xaut/lib/OracleLib.sol";
-import {IAggregatorV3} from "../src/xaut/interfaces/IAggregatorV3.sol";
 
-/// @notice INIT-ONLY: creates the XAUT/wstGBP dynamic-fee pool AT THE ORACLE FAIR PRICE (via the
-///         same OracleLib the hook prices with, so on-chain deviation is ~0 at init by
-///         construction) — and nothing else. No funds move; any address can run it, once.
+/// @dev XAUt (Tether Gold) issuer-blocklist probe — `isBlocked` verified live 2026-07-16
+///      (the legacy-Tether `isBlackListed`/`getBlackListStatus` selectors revert on this token).
+interface IXautBlocklist {
+    function isBlocked(address account) external view returns (bool);
+}
+
+/// @notice INIT-ONLY: creates the XAUT/wstGBP dynamic-fee pool AT THE ORACLE FAIR PRICE — composed
+///         through the same OracleLib the hook prices with, USING THE DEPLOYED HOOK'S OWN feed
+///         addresses and staleness windows (read from `hook.xauUsdFeed()/gbpUsdFeed()/feeParams()`,
+///         never duplicated here — a retuned deploy can't drift out from under this script), so
+///         on-chain deviation is ~0 at init by construction — and nothing else. No funds move; any
+///         address can run it, once.
 ///
-///         The oracle fair is METAL-priced: expect the pool to drift to d ≈ -basis (~-50bps,
-///         XAUt trades under the XAU/USD feed) after funding + the first arb — that is the
-///         venue's designed rest state, not a mispriced init (see the hook NatSpec and
-///         SECURITY_XAUT_WSTGBP.md; initializing at fair*(1-basis) instead would hardcode a basis
-///         estimate and break the deviation assert below).
+///         The oracle fair is METAL-priced: after funding + the first arb the pool drifts to
+///         d ≈ -basis, the token–metal gap. The basis is small and SIGN-UNSTABLE (~+50bp discount
+///         estimated 2026-07-11; ~11bp premium — XAUt ABOVE the feed — measured 2026-07-16), so the
+///         rest state may sit either side of zero; both regimes are priced in the sweep
+///         (sim/RESULTS_XAUT.md extended basis table; see the hook NatSpec and
+///         SECURITY_XAUT_WSTGBP.md §6). Initializing at fair*(1-basis) instead would hardcode a
+///         basis estimate and break the deviation assert below.
 ///
 ///         FUNDING IS A UI ACTION, not a script: the pool is a normal v4 AMM (the hook has no
 ///         liquidity callbacks), so the treasury Safe adds/collects/removes POL through the
@@ -39,8 +49,6 @@ contract InitXautPool is Script {
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address internal constant WSTGBP = 0x57C3571f10767E49C9d7b60feb6c67804783B7aE;
     address internal constant XAUT = 0x68749665FF8D2d112Fa859AA293F07A622782F38;
-    address internal constant XAU_USD_FEED = 0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6;
-    address internal constant GBP_USD_FEED = 0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5;
     address internal constant MULTISIG = 0x846a655a4fA13d86B94966DFDf4D9a070e554f7c;
 
     /// @dev High-vol pair (gold-in-GBP ~37% annualized): spacing 60 like the WETH venue — POL
@@ -61,8 +69,15 @@ contract InitXautPool is Script {
         // --- pre-flight ----------------------------------------------------------------------
         require(address(hook.wrapper()) == WSTGBP && hook.xaut() == XAUT, "InitXautPool: wrong hook");
         require(hook.owner() == MULTISIG, "InitXautPool: hook not multisig-owned");
+        // XAUt issuer surface (SECURITY §8): re-check the blocklist immediately before init — the
+        // deploy-time check may be stale by now, and POL funding follows this step.
+        require(!IXautBlocklist(XAUT).isBlocked(POOL_MANAGER), "InitXautPool: PoolManager blocked by XAUt");
+        require(!IXautBlocklist(XAUT).isBlocked(MULTISIG), "InitXautPool: multisig blocked by XAUt");
+        // Price with the deployed hook's OWN oracle configuration (feeds + staleness windows) so
+        // init can never diverge from what the hook will price with (review finding 2026-07-16).
+        (,,,,,,,, uint24 xauWin, uint24 gbpWin) = hook.feeParams();
         (uint256 fairWad, OracleLib.FallbackReason reason) =
-            OracleLib.fairPriceWad(IAggregatorV3(XAU_USD_FEED), IAggregatorV3(GBP_USD_FEED), WSTGBP, 90_000, 90_000);
+            OracleLib.fairPriceWad(hook.xauUsdFeed(), hook.gbpUsdFeed(), address(hook.wrapper()), xauWin, gbpWin);
         require(reason == OracleLib.FallbackReason.NONE, "InitXautPool: oracle not live");
         require(fairWad > FAIR_MIN && fairWad < FAIR_MAX, "InitXautPool: fair price implausible");
 
@@ -93,9 +108,11 @@ contract InitXautPool is Script {
         console2.log("init tick:", vm.toString(tickNow));
         console2.log("fair (wstGBP per XAUT, WAD):", fairWad);
         console2.log("init deviation (ppm):", vm.toString(d));
-        console2.log("NEXT: fund POL via the Uniswap UI (see DEPLOY.md, XAUT venue section).");
-        console2.log("      Post-funding drift to d ~ -50bps vs the metal feed is the designed");
-        console2.log("      rest state (token-metal basis), not an incident.");
+        console2.log("NEXT: fund POL via the Uniswap UI (see DEPLOY.md, XAUT venue section;");
+        console2.log("      re-run the XAUt blocklist checks there immediately before funding).");
+        console2.log("      Post-funding drift to |d| <~ 50bps vs the metal feed (EITHER side -");
+        console2.log("      the token-metal basis is sign-unstable) is the designed rest state,");
+        console2.log("      not an incident.");
     }
 
     /// @dev sqrtPriceX96 of a pool trading exactly at `fairWad` (wstGBP per XAUT): the raw pool

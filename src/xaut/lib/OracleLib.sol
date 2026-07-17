@@ -12,12 +12,14 @@ import {FixedPoint96} from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
 ///         feeds (8 decimals) and the wrapper's WAD tGBP-per-wstGBP NAV (tGBP ≈ GBP at par), plus the
 ///         pool-side helpers to express slot0 in the same orientation and take a signed ppm deviation.
 /// @dev THE FEED PRICES THE METAL, NOT THE TOKEN (accepted risk, venue decision 2026-07-11): XAU/USD
-///      is spot gold; XAUt persistently trades ~0.5% BELOW it (custody/redemption friction). The pool
-///      therefore RESTS at d ≈ −basis rather than d ≈ 0. At rest the redeem side is surcharge-immune
-///      (reads non-closing under any threshold); the mint side reads closing, and the goldsim sweep
-///      (sim/RESULTS_XAUT.md) deliberately shipped a threshold BELOW the basis, so resting mint-side
-///      flow pays base + surcharge by design. The owner can retune if the basis regime shifts; see
-///      SECURITY_XAUT_WSTGBP.md "token–metal basis".
+///      is spot gold while the pool trades XAUt; the token–metal gap (custody/redemption friction) is
+///      small and SIGN-UNSTABLE (~+50bp discount estimated 2026-07-11; ~11bp premium measured
+///      2026-07-16). The pool therefore RESTS at d ≈ −basis rather than d ≈ 0 — either side of zero.
+///      Discount regime: the redeem side is surcharge-immune at rest and resting mint-side flow pays
+///      base + surcharge under the shipped sub-basis threshold (by design). Premium regime: the
+///      surcharged side flips to the redeem conveyor (ramp-bounded). Both regimes are priced in the
+///      sweep (sim/RESULTS_XAUT.md extended basis table); the owner can retune if the basis regime
+///      shifts; see SECURITY_XAUT_WSTGBP.md "token–metal basis".
 ///
 ///      NEVER-REVERT CONTRACT: `fairPriceWad` and the pure helpers are total — any feed failure
 ///      (call revert, empty/short/garbage return, non-positive or absurd answer, stale round,
@@ -84,8 +86,8 @@ library OracleLib {
         // nav == 0 is the pip's documented paused state (views return 0 rather than revert).
         if (nav == 0 || nav > MAX_ANSWER) return (0, FallbackReason.NAV_BAD);
 
-        // (X/G) GBP-per-XAU ÷ N GBP-per-wstGBP = wstGBP-per-XAUT (metal-priced; the token trades
-        // ~0.5% under it — see the basis note above). The 8-dec feed scales cancel in the ratio,
+        // (X/G) GBP-per-XAU ÷ N GBP-per-wstGBP = wstGBP-per-XAUT (metal-priced; the token trades at
+        // a small sign-unstable basis to it — see the note above). The 8-dec feed scales cancel in the ratio,
         // one WAD scales the output. Bounds: x·WAD ≤ 1e48, g·nav ≤ 1e60 — no overflow, and FullMath
         // carries the 512-bit intermediate product.
         fairWad = FullMath.mulDiv(x * WAD, WAD, g * nav);
