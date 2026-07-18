@@ -138,8 +138,8 @@ Fixed in the fetch script (normalize to ms pre-sort) + documented in `sim/data/R
 - [ ] **Commit + push this change-set**; record `git rev-parse HEAD` as the deploy rev; tree
       clean at that rev (operator action — verdict condition 1)
 - [ ] Risk acceptance recorded (verdict conditions 3 + 4)
-- [ ] Deployer funded (gas only), keystore + Etherscan key ready; init follows deploy
-      IMMEDIATELY per DEPLOY.md §X2 (same init front-run window as the sibling venues)
+- [ ] Deployer funded (gas only), keystore + Etherscan key ready; the combined deploy script sends
+      initialization immediately after deployment per DEPLOY.md §X2
 - [ ] After deploy: §X4 POL funding via the Uniswap UI (wide geometric bracket, down-side-wide —
       NAV ratchet AND a gold rally both consume the lower bound; small test add → probe swap →
       size), §X6 monitoring activation (Dune decode submission, xaut variants + the histogram's
@@ -201,14 +201,17 @@ Response (all fresh runs this pass):
    corrected everywhere it was wrong-signed: SECURITY §§ intro/6/7/8, hook + OracleLib + FeeMath
    NatSpec, README venue section, DEPLOY.md §X0/§X3/§X4/§X6, dune README + histogram SQL,
    user guide, sweep config/docstrings/render, adversarial-test NatSpec.
-5. **Deployment-edge hardening** (same review): `InitXautPool` now derives feed addresses AND
-   staleness windows from the DEPLOYED hook (`xauUsdFeed()/gbpUsdFeed()/feeParams()` — no
-   duplicated oracle config to drift); `DeployXautHook` pre-flight requires XAUt
+5. **Deployment-edge hardening** (same review, subsequently folded into the deploy script):
+   `DeployXautHook` and recovery-only `InitXautPool` initialize via the shared
+   `script/XautPoolInitBase.sol` core, which derives feed addresses AND staleness windows
+   from the DEPLOYED hook (`xauUsdFeed()/gbpUsdFeed()/feeParams()` — no duplicated oracle config
+   to drift, and no duplicated init/sqrt math between the two scripts); `DeployXautHook`
+   pre-flight requires XAUt
    `isBlocked(...) == false` for PoolManager / multisig / PositionManager / Permit2 and logs the
    XAUt proxy implementation (EIP-1967 slot; `0x4C0d2c74A8D26f1E4F5653021c521F5471F9e566` at
    this pass — note the getter is `isBlocked`; the legacy-Tether `isBlackListed` selectors
-   revert on this token); `InitXautPool` re-checks the blocklist pre-init; DEPLOY.md §X4 repeats
-   it pre-funding (cast one-liners).
+   revert on this token); recovery-only `InitXautPool` re-checks the blocklist pre-init; DEPLOY.md
+   §X4 repeats it pre-funding (cast one-liners).
 6. **Verdict condition 3 amended in place**: scale-up follows the ROADMAP 2026-07-11 operator
    stance (NOT audit-gated); the deferred weth+usdc+xaut bundled audit remains queued.
 

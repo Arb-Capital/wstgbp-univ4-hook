@@ -300,8 +300,10 @@ pool is funded:
 # XAUT/wstGBP Dynamic-Fee Venue — Deployment Runbook (fourth venue)
 
 Same skeleton as the WETH runbook above; this section records only the deltas and the
-venue-specific decisions. Scripts: `script/DeployXautHook.s.sol` + `script/InitXautPool.s.sol`;
-targets: `make deploy-xaut-hook[-dry]`, `make init-xaut-pool[-dry]`, `make verify-xaut-hook`.
+venue-specific decisions. `script/DeployXautHook.s.sol` deploys the hook and then initializes the
+pool. Normal targets: `make deploy-xaut-hook[-dry]`, then `make verify-xaut-hook`. If init goes
+unsent, recovery is `make deploy-xaut-hook-resume` first; the standalone `InitXautPool.s.sol` /
+`make init-xaut-pool[-dry]` are last-resort (they break the verify resume — §X3).
 Status: **BUILT, NOT YET DEPLOYED** — the goldsim sweep + readiness pass gate the deploy (§X0).
 
 ## X0. Preconditions (deltas vs §0)
@@ -338,42 +340,84 @@ Status: **BUILT, NOT YET DEPLOYED** — the goldsim sweep + readiness pass gate 
 ## X1. Fork rehearsal
 
 ```bash
-make deploy-xaut-hook-dry     # keyless; asserts feed decimals (8/8), XAUT decimals == 6, the
+make deploy-xaut-hook-dry     # keyless; deploys + initializes; asserts feed decimals (8/8),
+                              # XAUT decimals == 6, the
                               # two-feed fair corridor (500e18–20_000e18 wstGBP/XAUT — metal fair
                               # sits in the low thousands-e18; FAIR_MIN alone also rejects an
                               # orientation flip, the inverse ≈ 4e14), mining, exact flag bits
-                              # 0x20C0
-# full two-step rehearsal on a persistent anvil fork:
+                              # 0x20C0, and init deviation < 1000 ppm
+# persistent-fork rehearsal of the same combined script:
 anvil --fork-url $ETH_RPC_URL --gas-limit 3000000000 &   # match foundry.toml gas_limit
-# deploy + init against 127.0.0.1:8545 with a funded key, then kill anvil and
+# run deploy-xaut-hook against 127.0.0.1:8545 with a funded key, then kill anvil and
 # DELETE the rehearsal broadcast/ records (they are not deploy artifacts).
 ```
 
-## X2. Hook deploy — mainnet
+## X2. Hook deploy + pool init — mainnet
 
 ```bash
 ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… make deploy-xaut-hook
 ```
 
-Identical rationale to §2: record the hook address from the logs, do NOT verify inline, go
-straight to §X3. The hook is owned by the multisig from construction — no acceptance step.
+The script broadcasts the CREATE2 hook deployment followed immediately by PoolManager
+initialization. Its slot0/deviation post-asserts run in forge's **pre-broadcast simulation**, not
+against the mined chain — the on-chain confirmation is the §X3½ read-backs, so run those even
+though the script "passed". Record the hook address and PoolId from the logs. Do NOT verify
+inline. The hook is owned by the multisig from construction — no acceptance step.
 
-## X3. Pool init — mainnet (IMMEDIATELY after deploy)
+## X3. Pool init details + recovery
+
+The normal §X2 command already initializes the pool. If hook deployment confirms but the second
+transaction is not broadcast, **resume the same broadcast first**:
+
+```bash
+ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… make deploy-xaut-hook-resume
+```
+
+forge re-sends only the pending initialize, completing the broadcast record so `make
+verify-xaut-hook` still works (rehearsed on a fork: partial record with 1 receipt → resume →
+2 receipts, pool at the recorded price). Two caveats: (1) resume replays each tx against the
+**RPC recorded in `broadcast/`** — the CLI `--rpc-url` does not override it, so if the outage was
+that endpoint itself, restore it or fix the URL in `broadcast/…/run-latest.json` +
+`cache/…/run-latest.json` first; (2) it re-sends the init priced at deploy-simulation time, so
+resume promptly — if hours have passed, print the live fair (`XAUT_HOOK=<hook> make
+init-xaut-pool-dry`) and compare against the deploy log before resuming.
+
+**Last resort only** — broadcast record lost/unusable, or the recorded fair has drifted
+materially — use the standalone initializer:
 
 ```bash
 XAUT_HOOK=<hook> make init-xaut-pool-dry
 XAUT_HOOK=<hook> ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… make init-xaut-pool
 ```
 
-Same init-race posture and front-run recovery as §3 (permissionless init, predictable PoolKey —
-if front-run at a bad price, DO NOT fund; arb it to fair through the hook's own fee schedule or
-abandon the key). tickSpacing is **60** (high-vol pair — gold-in-GBP ~37% annualized — with wide
-POL brackets, so ~0.6% edge quantization is immaterial; the USDC venue's spacing-1 tight-bracket
-rationale does not apply). The script initializes at the **METAL fair**, composed through the
-same OracleLib the hook prices with **using the deployed hook's own feed addresses and staleness
-windows** (read from the hook, never duplicated — a retuned deploy cannot drift out from under
-init), and post-asserts |deviation| < 1000 ppm. It also re-checks the XAUt blocklist for the
-PoolManager and multisig. Expect the pool to drift to d ≈ −basis after funding + the first arb —
+This initializes outside the deploy broadcast, which still holds its unsent initialize —
+**`make verify-xaut-hook` will then fail** (rehearsed: "EOA nonce changed unexpectedly" when the
+same key ran the standalone init; `PoolAlreadyInitialized`/`0x7983c051` otherwise). Verify the
+hook directly instead:
+
+```bash
+forge verify-contract $XAUT_HOOK src/xaut/XautWstGbpHook.sol:XautWstGbpHook \
+  --rpc-url $ETH_RPC_URL --guess-constructor-args --watch --etherscan-api-key $ETHERSCAN_API_KEY
+```
+
+Initialization is still a distinct on-chain transaction, but the Forge script sends it as the
+next transaction without a manual operator step. **The §3 init-race posture still applies in
+shrunken form**: `--slow` waits for the deploy tx to confirm before sending init, so the canonical
+PoolKey is predictable from the now-public hook address for at least one block while `initialize`
+is permissionless. For a zero-width window, use a private bundle RPC (e.g. Flashbots Protect as
+`ETH_RPC_URL`) so both txs land together. If the init tx reverts with pool-already-initialized
+(front-run at a bad price): do NOT fund anything — follow §3's recovery playbook (dust-swap a
+zero-liquidity hostile init back to fair; simulate-then-arb mispriced liquidity through the hook's
+own fee schedule, surcharge cap here 100 bps not 60; or, pathological state, abandon the key and
+initialize an alternate-tickSpacing canonical key with sign-off). tickSpacing is **60** (high-vol pair —
+gold-in-GBP ~37% annualized — with wide POL brackets, so ~0.6% edge quantization is immaterial;
+the USDC venue's spacing-1 tight-bracket rationale does not apply). The deploy and recovery
+scripts initialize through one shared core (`script/XautPoolInitBase.sol` — the two paths cannot
+diverge) at the **METAL fair**, composed through the same OracleLib the hook prices with
+**using the deployed hook's own feed addresses and staleness windows** (read from the hook, never
+duplicated — a retuned deploy cannot drift out from under init), and post-assert |deviation| <
+1000 ppm (simulation-time, §X2). The recovery script also re-checks the XAUt blocklist because it
+may run later than deployment. Expect the pool to drift to d ≈ −basis after funding + the first arb —
 the designed rest state, NOT a mispriced init (|basis| ≲ 50 bps and sign-unstable: discount ⇒
 d < 0, premium ⇒ d > 0 — the live 2026-07-16 measurement was a ~11bp premium); do not "fix" it by
 initializing at fair×(1−basis), which would hardcode a basis estimate and break the deviation
@@ -385,10 +429,14 @@ assert.
 ETH_RPC_URL=… ETH_FROM=… ETH_KEYSTORE=… ETHERSCAN_API_KEY=… make verify-xaut-hook
 cast call $XAUT_HOOK "owner()(address)"   # 0x846a…4f7c
 cast call $XAUT_HOOK "paused()(bool)"     # false
+# on-chain slot0 (the script's post-asserts ran in simulation only, §X2): low 160 bits of the
+# returned word must equal the script's logged "init sqrtPriceX96" (pools mapping is slot 6):
+cast call 0x000000000004444c5dc75cB358380D2e3dE08A90 "extsload(bytes32)(bytes32)" \
+  $(cast keccak $(cast abi-encode "f(bytes32,uint256)" $POOL_ID 6))
 ```
 
 Plus `feeParams()` read-back 10/10 == `simParams()` (the deploy script already asserts this
-on-chain; re-check by eye).
+during execution; re-check by eye).
 
 ## X4. Funding via the Uniswap UI (the Safe) — range METHOD (final numbers at launch)
 
@@ -407,7 +455,7 @@ and launch; compute them at funding time from the live fair. The METHOD is decid
   low-side headroom).
 - The UI snaps to tickSpacing 60 (~0.6% price steps) — immaterial at this bracket width; take the
   snapped ticks and record them.
-- **Immediately before funding, repeat the XAUt blocklist checks** (the deploy/init preflights
+- **Immediately before funding, repeat the XAUt blocklist checks** (the deploy/recovery-init preflights
   may be hours stale by now; SECURITY §8):
 
   ```bash

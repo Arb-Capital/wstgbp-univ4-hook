@@ -301,7 +301,7 @@ identical):
   (constructor asserts `XAUT.decimals() == 6`).
 - **tickSpacing 60** (the WETH venue's): high-vol pair with wide POL brackets, so ~0.6% edge
   quantization is immaterial (the USDC venue's spacing-1 tight-bracket rationale does not apply).
-- **Fair-price corridor 500e18–20,000e18** in the deploy/init scripts: metal fair sits in the low
+- **Fair-price corridor 500e18–20,000e18** in the combined deploy+init flow (and recovery init): metal fair sits in the low
   thousands-e18 (~2,300–3,100 at 2026 prices), there is no near-1:1 ambiguity, and FAIR_MIN alone
   rejects an orientation flip (the inverse ≈ 4e14).
 - **Token–metal basis rest state (the venue's signature)**: the XAU/USD feed prices spot gold
@@ -332,7 +332,7 @@ not USDC's 70k).
 | Role | Address |
 |---|---|
 | **`XautWstGbpHook`** | **TBD at deploy** (flags `0x20C0`; owner = multisig from construction) |
-| **Pool** (v4 singleton — id, not address) | **TBD at init** (init at the metal fair; post-funding drift to d ≈ −50 bps is the designed rest state) |
+| **Pool** (v4 singleton — id, not address) | **TBD at deploy** (the combined script initializes at the metal fair; post-funding drift to d ≈ −50 bps is the designed rest state) |
 | wstGBP (currency0, the wrapper) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` |
 | XAUT — Tether Gold (currency1, 6 decimals) | `0x68749665FF8D2d112Fa859AA293F07A622782F38` |
 | Chainlink XAU/USD | `0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6` (8 dec; 0.3% / 24h heartbeat → window 90000s; prices the METAL, not the token) |

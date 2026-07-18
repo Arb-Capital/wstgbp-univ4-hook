@@ -338,8 +338,10 @@ Priority order (adoption objective, capital available):
       launch per operator sizing. **Progress 2026-07-16:** contracts + tests + scripts + sim
       package BUILT and green (456 tests repo-wide): `src/xaut/` (two-feed fair, 8-entry
       `FallbackReason`, `XAUT_UNIT=1e6`, 10-field `FeeParams`), 111 xaut test/invariant fns
-      across 9 suites (gas warm 9,642 / cold 66,105 vs <10k/<80k), `DeployXautHook.s.sol` +
-      `InitXautPool.s.sol` (corridor 500e18–20_000e18, spacing 60) + Makefile targets,
+      across 9 suites (gas warm 9,642 / cold 66,105 vs <10k/<80k), `DeployXautHook.s.sol`
+      (combined deploy+init) + recovery-only `InitXautPool.s.sol` (both over the shared
+      `XautPoolInitBase.sol` init core; corridor
+      500e18–20_000e18, spacing 60) + Makefile targets,
       `sim/goldsim/` + `make sim-data-gold`/`sim-sweep-xaut`, DEPLOY.md §X0–§X6 + README venue
       section + Dune `xaut_*.sql` + check_feeds XAU/USD probe. Sweep DONE 2026-07-16
       (`sim/RESULTS_XAUT.md`, PAXG gold leg — Binance µs-timestamp trap fixed in
@@ -359,12 +361,13 @@ Priority order (adoption objective, capital available):
       sibling (+$12–122 in organic-0 cells, −$1.3–3.3k per organic-1 cell, rank 39 in the
       discount regime), while the union of BOTH regime runs selects the shipped params
       UNIQUELY (worst rank 7 vs 9 next-best) — NOT re-stamped, owner retune path documented;
-      InitXautPool
-      now derives feeds/windows from the deployed hook; deploy/init/pre-funding XAUt blocklist
+      DeployXautHook and recovery-only InitXautPool initialize via one shared core
+      (XautPoolInitBase) that derives init feeds/windows from the deployed
+      hook; deploy/recovery-init/pre-funding XAUt blocklist
       checks + impl-slot logging added; readiness condition 3 amended to the operator stance
       (audits not a scale-up gate); basis prose corrected repo-wide; anvil two-step re-rehearsed
       green (readiness addendum has the full record).
-      REMAINING (operator): commit, then deploy + init + verify + fund per DEPLOY.md §X.
+      REMAINING (operator): commit, then combined deploy+init + verify + fund per DEPLOY.md §X.
 - [ ] **Deferred — external audit** (`src/weth/` + `src/usdc/`, plus `src/xaut/` when built, one
       engagement): not a gate right now (operator stance 2026-07-11); revisit when POL is
       materially larger or third-party LP shows up.

@@ -291,8 +291,9 @@ upgradeable proxy), and the same class every XAUt holder bears anywhere:
 
 Made executable at the deployment edges (2026-07-16 review): `DeployXautHook` pre-flight requires
 `!isBlocked(...)` for the PoolManager, multisig, PositionManager and Permit2, and logs the XAUt
-proxy implementation in force (EIP-1967 slot) into the deploy record; `InitXautPool` re-checks the
-blocklist immediately before init, and DEPLOY.md §X repeats the check before POL funding.
+proxy implementation in force (EIP-1967 slot) into the deploy record before it deploys and
+initializes; recovery-only `InitXautPool` re-checks the blocklist immediately before init, and
+DEPLOY.md §X repeats the check before POL funding.
 
 Accepted for v1; revisit only if issuer-risk posture changes repo-wide (it would implicate the
 USDC venue equally).

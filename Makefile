@@ -42,7 +42,8 @@ COVERAGE_SKIP := (Invariants|WethWstGbpGasTest|UsdcWstGbpGasTest|XautWstGbpGasTe
 	sim-test sim-sweep sim-data sim-sweep-usdc sim-data-cable sim-sweep-xaut sim-sweep-xaut-basis0 sim-data-gold sim-data-gold-xau \
 	deploy-weth-hook deploy-weth-hook-dry verify-weth-hook init-weth-pool init-weth-pool-dry \
 	deploy-usdc-hook deploy-usdc-hook-dry verify-usdc-hook init-usdc-pool init-usdc-pool-dry \
-	deploy-xaut-hook deploy-xaut-hook-dry verify-xaut-hook init-xaut-pool init-xaut-pool-dry
+	deploy-xaut-hook deploy-xaut-hook-dry deploy-xaut-hook-resume verify-xaut-hook \
+	init-xaut-pool init-xaut-pool-dry
 
 build :; forge build
 
@@ -270,8 +271,11 @@ init-usdc-pool :
 		--broadcast --slow
 
 # --- XAUT/wstGBP dynamic-fee venue deploy (see DEPLOY.md, XAUT venue section) ---
-# Same shape as the weth/usdc blocks: dry-run keyless; deploy does NOT verify inline (init must
-# follow immediately — init front-run window); verify resumes the broadcast afterwards.
+# The deploy script sends the hook deployment and canonical pool initialization in sequence.
+# It does NOT verify inline; verify resumes the completed broadcast afterwards. If the hook lands
+# but init is unsent, recover with deploy-xaut-hook-resume FIRST (re-sends only the pending tx,
+# keeping the broadcast record complete for verify); the standalone init targets are last-resort
+# and break verify-xaut-hook's --resume (DEPLOY.md §X3).
 
 deploy-xaut-hook-dry :; @$(KEYLESS) forge script script/DeployXautHook.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
 
@@ -285,6 +289,19 @@ deploy-xaut-hook :
 		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
 		--broadcast --slow
 
+# Recovery (first resort): hook deployment confirmed but the initialize tx was never sent — resume
+# the SAME broadcast; forge re-sends only the pending tx. NOTE: forge replays each tx against the
+# RPC recorded in broadcast/ (the CLI --rpc-url does not override it) — see DEPLOY.md §X3.
+deploy-xaut-hook-resume :
+	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
+	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
+	@test -n "$(ETH_KEYSTORE)" || { echo "ETH_KEYSTORE (keystore JSON path) is required"; exit 1; }
+	forge script script/DeployXautHook.s.sol --rpc-url $(ETH_RPC_URL) \
+		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
+		$(if $(ETH_PRIO_FEE),--priority-gas-price $(ETH_PRIO_FEE)) \
+		$(if $(ETH_GAS_PRICE),--with-gas-price $(ETH_GAS_PRICE)) \
+		--broadcast --resume --slow
+
 verify-xaut-hook :
 	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
 	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (the deployer address) is required"; exit 1; }
@@ -294,10 +311,14 @@ verify-xaut-hook :
 		--sender $(ETH_FROM) --keystore $(ETH_KEYSTORE) \
 		--broadcast --resume --verify --etherscan-api-key $(ETHERSCAN_API_KEY)
 
+# Last-resort recovery (prefer deploy-xaut-hook-resume): initializing outside the deploy broadcast
+# leaves that broadcast's init tx pending, so verify-xaut-hook's --resume then fails (nonce
+# mismatch / PoolAlreadyInitialized) — verify with forge verify-contract instead (DEPLOY.md §X3).
 init-xaut-pool-dry :
 	@test -n "$(XAUT_HOOK)" || { echo "XAUT_HOOK (deployed hook address) is required"; exit 1; }
 	@$(KEYLESS) forge script script/InitXautPool.s.sol --rpc-url $(or $(ETH_RPC_URL),https://ethereum-rpc.publicnode.com)
 
+# Last-resort recovery (see init-xaut-pool-dry note; reverts naturally if already initialized).
 init-xaut-pool :
 	@test -n "$(ETH_RPC_URL)" || { echo "ETH_RPC_URL is required"; exit 1; }
 	@test -n "$(ETH_FROM)" || { echo "ETH_FROM (deployer address) is required"; exit 1; }
