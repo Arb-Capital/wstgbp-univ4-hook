@@ -1,8 +1,8 @@
 # The XAUT/wstGBP Pool — a plain-English guide
 
 *For traders and liquidity providers. Companion to the developer docs
-(`SECURITY_XAUT_WSTGBP.md`, deploy runbook `DEPLOY.md`). **Not yet deployed** — addresses marked
-TBD below land at deploy.*
+(`SECURITY_XAUT_WSTGBP.md`, deploy runbook `DEPLOY.md`). **Live on mainnet since 2026-07-17**
+(addresses in §8).*
 
 ## TL;DR
 
@@ -174,8 +174,8 @@ mint/redeem round trip) are the same as the sibling venues'.
 
 | Thing | Address |
 |---|---|
-| `XautWstGbpHook` | TBD at deploy |
-| Pool (v4 singleton — id, not address) | TBD at deploy |
+| `XautWstGbpHook` | `0x68cF17471aA0Fe54578747C6C7e66795bC8020C0` |
+| Pool (v4 singleton — id, not address) | poolId `0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a` |
 | wstGBP (currency0) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` |
 | XAUT (currency1) | `0x68749665FF8D2d112Fa859AA293F07A622782F38` |
 | Chainlink XAU/USD | `0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6` |

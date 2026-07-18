@@ -6,7 +6,7 @@
 -- topic0 = 0x501d5d86a8d484bc563346b877c9f64e27cc283c053aed3dc499e4de6ab3173a
 -- topic1 = mintSide; data words: [0] fee ppm, [1] deviationPpm (int), [2] fallbackMode
 --
--- param: {{hook_address}} — the deployed XautWstGbpHook (TBD — venue not yet deployed)
+-- param: {{hook_address}} — the deployed XautWstGbpHook (0x68cF17471aA0Fe54578747C6C7e66795bC8020C0, deployed 2026-07-17)
 
 SELECT
     date_trunc('day', block_time) AS day,
@@ -18,7 +18,7 @@ SELECT
     sum(IF(varbinary_to_uint256(varbinary_substring(data, 65, 32)) = 1, 1, 0)) AS fallback_swaps
 FROM ethereum.logs
 WHERE contract_address = {{hook_address}}
-      AND block_time >= TIMESTAMP '2026-07-16' -- deploy-date floor TBD: set to the xaut hook's deploy date (partition-prunes the full-history scan)
+      AND block_time >= TIMESTAMP '2026-07-17' -- xaut-venue deploy date (block 25555342; partition-prunes the full-history scan)
   AND topic0 = 0x501d5d86a8d484bc563346b877c9f64e27cc283c053aed3dc499e4de6ab3173a
 GROUP BY 1, 2
 ORDER BY 1 DESC, 2

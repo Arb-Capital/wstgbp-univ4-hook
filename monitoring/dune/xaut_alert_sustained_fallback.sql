@@ -8,7 +8,7 @@
 -- Chainlink usually heartbeats a frozen price through the close (flat fair — NOT fallback), but
 -- if the feed pauses instead, staleness fallback is EXPECTED — cross-check against market hours
 -- before reacting to a weekend firing. More fallback minutes than the USDC venue is normal here.
--- param: {{hook_address}} — the deployed XautWstGbpHook (TBD — venue not yet deployed)
+-- param: {{hook_address}} — the deployed XautWstGbpHook (0x68cF17471aA0Fe54578747C6C7e66795bC8020C0, deployed 2026-07-17)
 
 WITH recent AS (
     SELECT varbinary_to_uint256(varbinary_substring(data, 65, 32)) = 1 AS fallback_mode

@@ -20,7 +20,7 @@
 --
 -- mintSide is topic1 (indexed); deviationPpm is data word [1], SIGNED (two's complement) —
 -- decode via varbinary_to_int256.
--- param: {{hook_address}} — the deployed XautWstGbpHook (TBD — venue not yet deployed)
+-- param: {{hook_address}} — the deployed XautWstGbpHook (0x68cF17471aA0Fe54578747C6C7e66795bC8020C0, deployed 2026-07-17)
 
 WITH swaps AS (
     SELECT

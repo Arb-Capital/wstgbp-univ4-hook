@@ -272,7 +272,7 @@ POL bracket (FINAL 2026-07-05): 1.20–1.60 USDC/wstGBP, ticks −274,501/−271
 
 ---
 
-## XAUT/wstGBP dynamic-fee venue (`src/xaut/`) — BUILT, NOT YET DEPLOYED
+## XAUT/wstGBP dynamic-fee venue (`src/xaut/`) — DEPLOYED 2026-07-17
 
 Fourth venue: **`XautWstGbpHook`**, a fee-only, oracle-aware dynamic-fee hook for a XAUT/wstGBP
 (Tether Gold) pool — the **first on-chain gold/sterling market**, cloned from the USDC venue.
@@ -327,12 +327,12 @@ PositionManager/UI-path (2), stateful invariants (8), gas (1) — warm overhead 
 **66,105** vs the <10k / <80k ceilings (two Chainlink chains, so the WETH venue's cold budget,
 not USDC's 70k).
 
-### Key mainnet addresses (XAUT/wstGBP venue) — hook NOT yet deployed
+### Key mainnet addresses (XAUT/wstGBP venue) — deployed 2026-07-17
 
 | Role | Address |
 |---|---|
-| **`XautWstGbpHook`** | **TBD at deploy** (flags `0x20C0`; owner = multisig from construction) |
-| **Pool** (v4 singleton — id, not address) | **TBD at deploy** (the combined script initializes at the metal fair; post-funding drift to d ≈ −50 bps is the designed rest state) |
+| **`XautWstGbpHook`** | **`0x68cF17471aA0Fe54578747C6C7e66795bC8020C0`** (flags `0x20C0`; owner = multisig from construction; deploy tx `0x08ef9c1f…932191`, block 25555342, 2026-07-17) |
+| **Pool** (v4 singleton — id, not address) | poolId **`0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a`** (init tx `0x24e4b7e0…568b4b`, block 25555343: metal fair 2,962.78e18 wstGBP/XAUT, sqrtPriceX96 1455558015419886624110, tick −356,267, **0 ppm** deviation; post-funding drift to \|d\| ≲ 50 bps either side is the designed rest state) |
 | wstGBP (currency0, the wrapper) | `0x57C3571f10767E49C9d7b60feb6c67804783B7aE` |
 | XAUT — Tether Gold (currency1, 6 decimals) | `0x68749665FF8D2d112Fa859AA293F07A622782F38` |
 | Chainlink XAU/USD | `0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6` (8 dec; 0.3% / 24h heartbeat → window 90000s; prices the METAL, not the token) |
@@ -340,9 +340,10 @@ not USDC's 70k).
 | v4 PoolManager / stock Quoter | `0x000000000004444c5dc75cB358380D2e3dE08A90` / `0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203` |
 | Owner multisig | `0x846a655a4fA13d86B94966DFDf4D9a070e554f7c` |
 
-Canonical PoolKey: (wstGBP, XAUT, fee `0x800000` DYNAMIC_FEE_FLAG, tickSpacing 60, hooks = TBD at
-deploy). POL bracket: METHOD decided (wide geometric ×/÷ ~1.5, biased down-side-wide for the NAV
-ratchet), final numbers at launch from the live fair — DEPLOY.md §X4.
+Canonical PoolKey: (wstGBP, XAUT, fee `0x800000` DYNAMIC_FEE_FLAG, tickSpacing 60, hooks =
+`0x68cF17471aA0Fe54578747C6C7e66795bC8020C0`). POL bracket: METHOD decided (wide geometric ×/÷
+~1.5, biased down-side-wide for the NAV ratchet), final numbers at funding time from the live
+fair — DEPLOY.md §X4.
 
 ---
 

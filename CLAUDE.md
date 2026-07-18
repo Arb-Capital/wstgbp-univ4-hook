@@ -378,6 +378,33 @@ decode, commit incl. broadcast/ records (repo convention).
 **`src/weth/` and `sim/wethsim/` are frozen — zero edits on this track.** Sign trap for tests:
 raising GBP/USD *lowers* fair ⇒ d > 0.
 
+## Fourth venue: XAUT/wstGBP dynamic-fee hook (`src/xaut/`) — DEPLOYED 2026-07-17
+
+`XautWstGbpHook`: gold/sterling clone of the USDC venue (first on-chain gold/sterling market; full
+track in `ROADMAP.md`). Deltas vs usdc: **two-feed** fair (XAU/USD + GBP/USD, both 8-dec, 90000s
+windows) in wstGBP-per-XAUT orientation, `XAUT_UNIT=1e6`, 10-field `FeeParams`, 8-entry
+`FallbackReason` (weth-style numbering with XAU in the ETH slot — codes RENUMBER vs usdc),
+tickSpacing 60, corridor 500e18–20_000e18. Venue signature: the feed prices the **METAL**, the
+pool trades the **TOKEN** — rest state d ≈ −basis, small and SIGN-UNSTABLE (~11bp premium measured
+2026-07-16); do NOT "fix" it at init or read it as drift. `simParams()` = the goldsim sweep winner
+(50,10)bps / thr 1000 / slope 1.0× / cap 100bps (unique union-of-regimes minimax winner; the
+sub-basis threshold is deliberate). Scripts: `DeployXautHook.s.sol` = combined deploy+init,
+`InitXautPool.s.sol` = last-resort recovery, both over the shared `script/XautPoolInitBase.sol`
+core; if init goes unsent, recovery is `make deploy-xaut-hook-resume` FIRST (standalone init
+breaks verify's `--resume` — DEPLOY.md §X3). Sim: `sim/goldsim/` (`make sim-data-gold`,
+`sim-sweep-xaut`). Readiness GO 2026-07-16 + review-response addendum
+(`docs/READINESS_XAUT_WSTGBP_2026-07-16.md`).
+**Mainnet (2026-07-17): hook `0x68cF17471aA0Fe54578747C6C7e66795bC8020C0` (flags 0x20C0, deploy
+block 25555342), poolId `0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a`
+(init block 25555343, tick −356,267, 0 ppm vs metal fair 2,962.78e18); post-deploy read-backs
+passed (owner = multisig, unpaused, feeParams 10/10 == simParams); deploy rev = commit `3d23ff6`
+("Deployment", same day — incl. `broadcast/` records + `script/XautPoolInitBase.sol`; the
+broadcast artifact's `"commit"` field is `bbcd706`, the HEAD at broadcast time — waiver in the
+readiness addendum); Etherscan verified 2026-07-17; Dune queries 8016646/47/49/51 created +
+hook submitted for decoding 2026-07-17.**
+Remaining (user-executed): POL funding (§X4, bracket from live fair at funding time; re-run the
+XAUt blocklist checks immediately before).
+
 ## Roadmap / open work
 
 Tracked in **[`ROADMAP.md`](ROADMAP.md)** — keep it current across sessions. Done: the backstop hook,
@@ -398,5 +425,6 @@ and **deferred** (preserved at `b7a5c5a`). Open headlines:
   `XAUT_UNIT=1e6`, XAU/USD+GBP/USD two-feed fair), sequenced behind depth + footprint: velocity is
   currently depth/gas/routing-bound (~$10k POL/pool ≈ 3% of sim scale), so P0 = listings/CoW dapp,
   P1 = POL deepening (USDC first, straight to sim scale), P2 = build `src/xaut/` (goldsim first; no
-  hard gate). **Audits deprioritized (operator stance 2026-07-11):** the venues serve live MEV flow
+  hard gate). **P2 executed: built 2026-07-16, DEPLOYED 2026-07-17** (fourth-venue section above).
+  **Audits deprioritized (operator stance 2026-07-11):** the venues serve live MEV flow
   un-audited — not a scale-up gate; revisit at materially larger POL. Full record in `ROADMAP.md`.

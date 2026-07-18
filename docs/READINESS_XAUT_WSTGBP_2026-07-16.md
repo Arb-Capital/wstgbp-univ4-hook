@@ -225,3 +225,34 @@ own config, identical to deploy's to the wei) → re-init reverts `PoolAlreadyIn
 
 Unchanged by this pass: verdict condition 1 (commit + push before broadcasting — the operator
 gate) and condition 4 (PAXG gold-leg caveat / optional Dukascopy confirmation re-sweep).
+
+## Addendum — deployment record (2026-07-17)
+
+Deployed to mainnet via `make deploy-xaut-hook` (combined deploy+init, one broadcast):
+
+| Fact | Value |
+|---|---|
+| `XautWstGbpHook` | `0x68cF17471aA0Fe54578747C6C7e66795bC8020C0` (flags `0x20C0`) |
+| Deploy tx | `0x08ef9c1fca00d9128814bb4f4cfbc90422e46a30213c78e3fb62e250d0932191`, block 25555342 (gas 1,758,027) |
+| PoolId | `0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a` |
+| Init tx | `0x24e4b7e0defd1ace4024112bf28ac4962a0c8b7af91cba7dead0559bdb568b4b`, block 25555343 (gas 56,661) |
+| Init price | metal fair 2,962.784931…e18 wstGBP/XAUT → sqrtPriceX96 1455558015419886624110, tick −356,267, **0 ppm** deviation |
+| XAUt impl in force | `0x4C0d2c74A8D26f1E4F5653021c521F5471F9e566` (unchanged since the 2026-07-16 review) |
+
+Post-deploy §X3½ read-backs (live mainnet, same day): `owner()` = the multisig
+`0x846a…4f7c`, `paused()` = false, on-chain slot0 == the logged sqrtPriceX96 (extsload
+read-back), `feeParams()` 10/10 == `simParams()`. The mainnet hook address and pool state match
+the fork rehearsals byte-for-byte (deterministic CREATE2).
+
+Verdict-condition status: **condition 1 (commit-before-broadcast) was NOT met — recorded as an
+explicit operator waiver.** Provenance: the broadcast artifact records the tree's HEAD at
+broadcast time as **`bbcd706`** (`broadcast/DeployXautHook.s.sol/1/run-latest.json` `"commit"`
+field) with the venue change-set uncommitted on top; the deployed change-set (incl. the
+`broadcast/` records and `script/XautPoolInitBase.sol`) was committed AFTERWARD, same day, as
+**`3d23ff6`** ("Deployment"). `3d23ff6` is therefore the deploy rev for source provenance
+(bytecode + scripts as broadcast), while the on-chain record's commit field points one commit
+earlier — both are listed here so neither reads as an error later. Conditions 2–4 unchanged (no
+hook/invariant code moved after the readiness runs — script/doc-only edits). Etherscan
+verification completed 2026-07-17 (`make verify-xaut-hook`); Dune queries created + validated
+and the hook submitted for decoding, same day (§X6 — IDs in `monitoring/dune/README.md`).
+Remaining operator step: POL funding (§X4).

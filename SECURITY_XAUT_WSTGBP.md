@@ -19,7 +19,10 @@ chains, not the USDC venue's one (`test/XautWstGbpGas.t.sol`). Stateful coverage
 drift/breakage on all three legs, LP churn, pause, and retunes against ghost-recorded invariants
 (fee == independent recomputation, stock-quoter parity, never-revert, no custody).
 
-Status: built and green, **NOT deployed** — mainnet hook address and poolId are TBD at deploy.
+Status: **DEPLOYED mainnet 2026-07-17** — hook `0x68cF17471aA0Fe54578747C6C7e66795bC8020C0`,
+poolId `0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a` (init at 0 ppm vs the
+metal fair; XAUt proxy implementation in force at deploy:
+`0x4C0d2c74A8D26f1E4F5653021c521F5471F9e566`, logged in the deploy record).
 
 The venue's economic frame differs from the USDC venue's in one structural way that shapes §§4, 6
 and 7: this is the first on-chain gold/sterling market (gold-in-GBP realized vol ~37% annualized ≈
@@ -243,8 +246,8 @@ Mitigation (structural, not reactive):
 ## 7. Weekend/holiday stale-fair + feed coarseness
 
 **Executable half:** the staleness/fallback machinery of §5 (per-feed windows, stale → fallback,
-never-revert); the market-calendar behavior itself is empirical and its weekend-round check is a
-readiness-pass item (this venue is not yet deployed).
+never-revert); the market-calendar behavior itself is empirical — the venue deployed 2026-07-17
+(a Friday), so the first live weekend round is the check.
 
 Gold observes the FX market calendar: closed weekends, plus a daily 22:00–23:00 UTC break — unlike
 the USDC venue's 24/7 crypto-native quote leg, this venue's dominant feed freezes for ~49 hours

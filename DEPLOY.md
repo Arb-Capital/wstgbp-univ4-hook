@@ -304,7 +304,15 @@ venue-specific decisions. `script/DeployXautHook.s.sol` deploys the hook and the
 pool. Normal targets: `make deploy-xaut-hook[-dry]`, then `make verify-xaut-hook`. If init goes
 unsent, recovery is `make deploy-xaut-hook-resume` first; the standalone `InitXautPool.s.sol` /
 `make init-xaut-pool[-dry]` are last-resort (they break the verify resume — §X3).
-Status: **BUILT, NOT YET DEPLOYED** — the goldsim sweep + readiness pass gate the deploy (§X0).
+Status: **DEPLOYED 2026-07-17** — hook `0x68cF17471aA0Fe54578747C6C7e66795bC8020C0` (deploy tx
+`0x08ef9c1f…932191`, block 25555342), poolId
+`0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a` (init tx `0x24e4b7e0…568b4b`,
+block 25555343, tick −356,267, **0 ppm** vs metal fair 2,962.78e18). Post-deploy §X3½ read-backs
+passed (owner = multisig, unpaused, slot0 == logged sqrtPrice, `feeParams()` 10/10 == `simParams()`).
+Deploy rev: commit `3d23ff6` ("Deployment" — the deployed change-set incl. the `broadcast/`
+records, committed same day; the broadcast artifact's `"commit"` field records `bbcd706`, the
+HEAD at broadcast time — see the readiness addendum waiver). Etherscan verification DONE
+2026-07-17. Remaining: POL funding (§X4), monitoring incl. Dune decode (§X6).
 
 ## X0. Preconditions (deltas vs §0)
 
@@ -486,9 +494,10 @@ ROADMAP decision 2026-07-11) and are ignored, not migrated.
   price through the close (flat fair — NOT fallback), but if the feed pauses instead, staleness
   fallback fires — EXPECTED; cross-check against market hours before reacting. More fallback
   minutes than the USDC venue is normal for this venue.
-- Dune: the four `monitoring/dune/xaut_*.sql` queries are written but NOT yet created on Dune —
-  create them at deploy, set the deploy-date floors (marked TBD in the sources), record the IDs
-  in `monitoring/dune/README.md`, and submit the verified hook for decoding. Reason codes
+- Dune: the four `monitoring/dune/xaut_*.sql` queries were created + validated 2026-07-17
+  (IDs 8016646/8016647/8016649/8016651 — table in `monitoring/dune/README.md`; deploy-date
+  floors set to 2026-07-17), and the verified hook was submitted for decoding the same day
+  (decoded tables usually land within ~a day; the raw-log queries work regardless). Reason codes
   RENUMBER again (8-entry enum, XAU/USD in the weth numbering's ETH/USD position — still ≠ the
   usdc 5-entry mapping); use `xaut_fallback_minutes.sql`, never another venue's decoder.
   Deviation-histogram mass at d ≈ −basis is the designed rest state, not an incident — and the

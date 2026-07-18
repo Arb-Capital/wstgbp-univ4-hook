@@ -54,20 +54,25 @@ never point the weth reason decoder at the usdc hook or vice versa.
 (The xaut column is structurally the weth numbering with XAU/USD in the ETH/USD position — two
 feeds again — but it is still a DIFFERENT venue enum and still ≠ the usdc 5-entry mapping.)
 
-## XAUT/wstGBP venue — prepared 2026-07-16 (NOT yet deployed; hook + poolId TBD)
+## XAUT/wstGBP venue — created 2026-07-17 (hook
+`0x68cF17471aA0Fe54578747C6C7e66795bC8020C0`, poolId
+`0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a`)
 
 Same posture as the other two dynamic-fee sets: public, saved (non-temp), parameterized on
-`{{hook_address}}` (default = the deployed XautWstGbpHook), none scheduled. The four `xaut_*.sql`
-sources below are written ahead of the deploy; **nothing exists on Dune yet** — at deploy, create
-them from these files, set the deploy-date floors (marked TBD in the sources), record the Dune IDs
-here, and submit the verified hook for decoding (DEPLOY.md §X6).
+`{{hook_address}}` (default = the deployed XautWstGbpHook), **none scheduled** (free-tier credit
+policy). All four validated on the free engine at creation (correct shapes, 0 rows pre-funding;
+costs 0.011–0.265 credits/run — the histogram's trailing-30d scan is the expensive one at 0.265).
 
 | Query | Dune ID | Source |
 |---|---|---|
-| Daily fees by direction (redeem = XAUT in; deploy-date floor TBD) | TBD at deploy | `xaut_swapfee_by_direction.sql` |
-| Deviation histogram (30d; sign-split + direction-aware `surcharge_paying` — mass at d ≈ −basis is the token–metal basis rest state, BY DESIGN, and the basis is SIGN-UNSTABLE: at a discount rest (d < 0) XAUT-in pays base only and wstGBP-in pays base + surcharge under the sub-basis threshold; at a premium rest (d > 0, the live 2026-07-16 regime) the sides flip, ramp-bounded) | TBD at deploy | `xaut_deviation_histogram.sql` |
-| Sustained fallback alert (alert-on-results shape; gold-market-hours caveat) | TBD at deploy | `xaut_alert_sustained_fallback.sql` |
-| Fallback minutes + reasons by day (**xaut 8-entry reason mapping**) | TBD at deploy | `xaut_fallback_minutes.sql` |
+| Daily fees by direction (redeem = XAUT in; deploy-date floor 2026-07-17) | [8016646](https://dune.com/queries/8016646) | `xaut_swapfee_by_direction.sql` |
+| Deviation histogram (30d; sign-split + direction-aware `surcharge_paying` — mass at d ≈ −basis is the token–metal basis rest state, BY DESIGN, and the basis is SIGN-UNSTABLE: at a discount rest (d < 0) XAUT-in pays base only and wstGBP-in pays base + surcharge under the sub-basis threshold; at a premium rest (d > 0, the live 2026-07-16 regime) the sides flip, ramp-bounded) | [8016647](https://dune.com/queries/8016647) | `xaut_deviation_histogram.sql` |
+| Sustained fallback alert (alert-on-results shape; gold-market-hours caveat) | [8016649](https://dune.com/queries/8016649) | `xaut_alert_sustained_fallback.sql` |
+| Fallback minutes + reasons by day (**xaut 8-entry reason mapping**) | [8016651](https://dune.com/queries/8016651) | `xaut_fallback_minutes.sql` |
+
+Contract decoding submitted 2026-07-17 (the hook is Etherscan-verified; decoded tables
+`<ns>.XautWstGbpHook_evt_SwapFee` / `_evt_OracleFallback` usually land within ~a day — the
+raw-log queries above work regardless and remain the saved form).
 
 The xaut hook emits the SAME event signatures (`SwapFee`, `OracleFallback` — identical topic0s) as
 the weth and usdc hooks. Venue-specific: mint side = wstGBP-in (currency0 in), redeem = XAUT-in;

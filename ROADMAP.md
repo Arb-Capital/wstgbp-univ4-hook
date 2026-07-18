@@ -367,10 +367,23 @@ Priority order (adoption objective, capital available):
       checks + impl-slot logging added; readiness condition 3 amended to the operator stance
       (audits not a scale-up gate); basis prose corrected repo-wide; anvil two-step re-rehearsed
       green (readiness addendum has the full record).
-      REMAINING (operator): commit, then combined deploy+init + verify + fund per DEPLOY.md §X.
-- [ ] **Deferred — external audit** (`src/weth/` + `src/usdc/`, plus `src/xaut/` when built, one
-      engagement): not a gate right now (operator stance 2026-07-11); revisit when POL is
-      materially larger or third-party LP shows up.
+      **DEPLOYED mainnet 2026-07-17:** hook `0x68cF17471aA0Fe54578747C6C7e66795bC8020C0`
+      (flags 0x20C0, deploy tx `0x08ef9c1f…932191` block 25555342), poolId
+      `0xcc06806357a71e7af630dce38d74ee16ed8bf1e0055bc66789d7de4dedef8d8a` (init tx
+      `0x24e4b7e0…568b4b` block 25555343, tick −356,267, **0 ppm** vs metal fair 2,962.78e18);
+      post-deploy read-backs passed (owner = multisig, unpaused, slot0 == logged sqrtPrice,
+      feeParams 10/10 == simParams). Deploy rev = commit `3d23ff6` ("Deployment", same day —
+      the deployed change-set incl. `broadcast/` records + `script/XautPoolInitBase.sol`; the
+      broadcast artifact's `"commit"` field records `bbcd706`, the HEAD at broadcast time —
+      explicit waiver in the readiness addendum). Etherscan verify DONE 2026-07-17. The four
+      Dune queries created + validated 2026-07-17 (IDs 8016646/8016647/8016649/8016651 —
+      `monitoring/dune/README.md`) and the hook submitted for Dune decoding same day.
+      REMAINING (operator): POL funding (§X4, bracket computed from live fair at funding
+      time; re-run the XAUt blocklist checks immediately before), then commit the post-deploy
+      doc updates.
+- [ ] **Deferred — external audit** (`src/weth/` + `src/usdc/` + `src/xaut/`, one engagement):
+      not a gate right now (operator stance 2026-07-11); revisit when POL is materially larger
+      or third-party LP shows up.
 
 ## Done
 
